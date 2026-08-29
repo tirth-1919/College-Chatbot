@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ChatMessage, SourceCard, ImageCard } from '../types';
+import { ChatMessage, ImageCard } from '../types';
 import { api } from '../services/api';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import {
-  Send, Sparkles, Volume2, Play, Pause, RotateCcw, ThumbsUp, ThumbsDown,
-  ExternalLink, ShieldCheck, Copy, Check, Bookmark, RefreshCw, AlertCircle
+  Send, Sparkles, Volume2, Play, Pause, ThumbsUp, ThumbsDown,
+  Copy, Check, Bookmark, RefreshCw, AlertCircle, CheckCircle2, ShieldCheck
 } from 'lucide-react';
 
 interface ChatViewProps {
@@ -13,29 +14,25 @@ interface ChatViewProps {
 const SUGGESTED_PROMPTS = [
   'What is the BCA fee?',
   'Who teaches DBMS?',
-  'What is today\'s timetable?',
-  'What events were organized last year?',
-  'Show me the AIT library.',
-  'Explain DBMS normalization.'
-];
-
-const PROCESSING_STEPS = [
-  { text: 'Understanding request...', progress: 25 },
-  { text: 'Searching verified information...', progress: 55 },
-  { text: 'Checking sources...', progress: 80 },
-  { text: 'Preparing answer...', progress: 95 }
+  'When is the DBMS exam?',
+  'What is the DBMS syllabus?',
+  'What is the BCA timetable?',
+  'Show AIT library information.',
+  'What events happened last year?',
+  'Explain normalization.',
+  'Make a study plan for my exam.',
+  'Show my result.'
 ];
 
 export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [processingStepIdx, setProcessingStepIdx] = useState(0);
+  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [lastUserPrompt, setLastUserPrompt] = useState<string>('');
-  const [errorPrompt, setErrorPrompt] = useState<string | null>(null);
   const [selectedImage, setSelectedImage] = useState<ImageCard | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -43,27 +40,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading, processingStepIdx]);
-
-  useEffect(() => {
-    let interval: any;
-    if (isLoading) {
-      setProcessingStepIdx(0);
-      interval = setInterval(() => {
-        setProcessingStepIdx(prev => (prev < PROCESSING_STEPS.length - 1 ? prev + 1 : prev));
-      }, 700);
-    } else {
-      setProcessingStepIdx(0);
-    }
-    return () => clearInterval(interval);
-  }, [isLoading]);
+  }, [messages, isLoading]);
 
   useEffect(() => {
     const resetChat = () => {
       setMessages([]);
       setInput('');
       setIsLoading(false);
-      setErrorPrompt(null);
+      setConversationId(undefined);
+      setLastUserPrompt('');
     };
     window.addEventListener('ait:new-chat', resetChat);
     return () => window.removeEventListener('ait:new-chat', resetChat);
@@ -73,34 +58,69 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
     const query = (textToSend || input).trim();
     if (!query || isLoading) return;
 
-    setErrorPrompt(null);
     setLastUserPrompt(query);
 
+    const userMsgId = `user-${Date.now()}`;
+    const tempAsstId = `asst-temp-${Date.now()}`;
+
     const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: userMsgId,
       role: 'user',
       content: query,
+      status: 'complete',
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, userMsg]);
+    const thinkingMsg: ChatMessage = {
+      id: tempAsstId,
+      role: 'assistant',
+      content: '',
+      status: 'thinking',
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMsg, thinkingMsg]);
     if (!textToSend) setInput('');
     setIsLoading(true);
 
     try {
-      const res = await api.sendMessage(query);
-      setMessages(prev => [...prev, res]);
-    } catch (err) {
-      setErrorPrompt(query);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'assistant',
-          content: 'Something went wrong while connecting to the assistant. Please try again.',
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      const res = await api.sendMessage(query, conversationId);
+      if (res.conversation_id) {
+        setConversationId(res.conversation_id);
+      }
+
+      const verifiedAnswer = res.content || res.answer || "I couldn't find verified AIT information about that.";
+
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === tempAsstId
+            ? {
+                ...res,
+                id: res.id || res.message_id || tempAsstId,
+                role: 'assistant',
+                content: verifiedAnswer,
+                status: 'complete',
+                timestamp: res.timestamp || new Date().toISOString(),
+              }
+            : msg
+        )
+      );
+    } catch (err: any) {
+      console.error('Chat error:', err);
+      const friendlyErr = err.message || "Sorry, I couldn't get an answer right now. Please try again.";
+      setMessages(prev =>
+        prev.map(msg =>
+          msg.id === tempAsstId
+            ? {
+                id: tempAsstId,
+                role: 'assistant',
+                content: friendlyErr,
+                status: 'error',
+                timestamp: new Date().toISOString(),
+              }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
@@ -142,7 +162,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
       };
 
       audio.play().catch(() => {
-        // Fallback to Web Speech API
         speakWithBrowser(msg.content, activeKey);
       });
     } else {
@@ -246,21 +265,49 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
               className={`w-full max-w-2xl rounded-2xl p-4 sm:p-5 shadow-md transition-all ${
                 msg.role === 'user'
                   ? 'bg-gradient-to-r from-ait-600 to-blue-600 text-white font-medium ml-auto'
+                  : msg.status === 'error'
+                  ? 'bg-red-950/40 text-red-200 border border-red-500/30'
                   : 'bg-slate-900/90 text-slate-100 border border-slate-800/90'
               }`}
             >
-              {/* Main Answer text */}
-              <div className="prose prose-invert prose-sm sm:prose-base max-w-none whitespace-pre-wrap leading-relaxed text-slate-100">
-                {msg.content}
-              </div>
+              {/* Thinking State */}
+              {msg.status === 'thinking' ? (
+                <div className="flex items-center space-x-3 py-1 text-slate-300">
+                  <div className="flex space-x-1.5 items-center">
+                    <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-xs sm:text-sm font-medium text-slate-300">Thinking…</span>
+                </div>
+              ) : msg.status === 'error' ? (
+                <div className="flex items-start space-x-2.5">
+                  <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm text-red-200">{msg.content || "I’m unable to generate an answer right now. Please try again."}</p>
+                    <button
+                      onClick={() => handleRegenerate(lastUserPrompt)}
+                      className="mt-2.5 px-3 py-1 rounded-lg bg-red-600/80 hover:bg-red-500 text-white text-xs font-semibold flex items-center space-x-1.5 transition-all"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                </div>
+              ) : msg.role === 'user' ? (
+                <div className="text-xs sm:text-sm font-medium leading-relaxed text-white whitespace-pre-wrap">
+                  {msg.content}
+                </div>
+              ) : (
+                /* Assistant Message with Clean Markdown Rendering */
+                <div className="space-y-2">
+                  <MarkdownRenderer content={msg.content} />
+                </div>
+              )}
 
               {/* Verified Images Gallery with Lightbox */}
-              {msg.images && msg.images.length > 0 && (
-                <div className="mt-4 pt-3.5 border-t border-slate-800">
-                  <div className="text-xs font-semibold text-blue-300 mb-2.5 flex items-center space-x-1.5">
-                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                    <span>Official Verified Photographs</span>
-                  </div>
+              {msg.role === 'assistant' && msg.status === 'complete' && msg.images && msg.images.length > 0 && (
+                <div className="mt-4 pt-3.5 border-t border-slate-800/80">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {msg.images.map((img, idx) => (
                       <div
@@ -277,64 +324,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
                               (e.target as HTMLElement).style.display = 'none';
                             }}
                           />
-                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-85" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-80" />
                           <div className="absolute bottom-2 left-2.5 right-2.5">
-                            <p className="text-xs font-semibold text-white truncate">{img.caption}</p>
-                            <p className="text-[10px] text-slate-400 truncate">{img.provenance || 'AIT Official Record'}</p>
+                            <p className="text-xs font-semibold text-white truncate">{img.caption || img.source_page}</p>
                           </div>
                         </div>
-                        <div className="p-2 flex items-center justify-between text-[11px] bg-slate-950 text-slate-400">
-                          <span className="truncate">{img.source_page}</span>
-                          <a
-                            href={img.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-blue-400 hover:text-blue-300 flex items-center space-x-1 flex-shrink-0"
-                          >
-                            <span>Source</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Sources Section Below Answer */}
-              {msg.sources && msg.sources.length > 0 && (
-                <div className="mt-4 pt-3.5 border-t border-slate-800">
-                  <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center space-x-1.5">
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Sources & Citations</span>
-                  </div>
-                  <div className="space-y-1.5">
-                    {msg.sources.map((s, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between p-2.5 rounded-xl bg-slate-950/70 border border-slate-800/80 text-xs"
-                      >
-                        <div className="flex items-center space-x-2 truncate mr-2">
-                          <span className="text-emerald-400 font-bold">✓</span>
-                          <span className="font-medium text-slate-200 truncate">{s.title}</span>
-                          {s.page_or_record && (
-                            <span className="text-[11px] text-slate-400 hidden sm:inline truncate">
-                              • {s.page_or_record}
-                            </span>
-                          )}
-                        </div>
-                        {s.source_url && (
-                          <a
-                            href={s.source_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-blue-400 hover:text-blue-300 flex items-center space-x-1 flex-shrink-0 text-xs font-semibold"
-                          >
-                            <span>View source</span>
-                            <ExternalLink className="w-3 h-3" />
-                          </a>
-                        )}
                       </div>
                     ))}
                   </div>
@@ -342,7 +336,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
               )}
 
               {/* Chat Actions: Copy, Replay, Regenerate, Feedback, Save */}
-              {msg.role === 'assistant' && (
+              {msg.role === 'assistant' && msg.status === 'complete' && (
                 <div className="mt-3.5 pt-2.5 flex items-center justify-between text-xs text-slate-400 border-t border-slate-800/80">
                   <div className="flex items-center space-x-1.5 sm:space-x-2">
                     <button
@@ -415,13 +409,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
             </div>
 
             {/* Suggested Follow-up Chips */}
-            {msg.suggested_followups && msg.suggested_followups.length > 0 && (
+            {msg.role === 'assistant' && msg.status === 'complete' && msg.suggested_followups && msg.suggested_followups.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2 max-w-2xl">
                 {msg.suggested_followups.map((chip, idx) => (
                   <button
                     key={idx}
                     onClick={() => handleSend(chip)}
-                    className="px-3 py-1.5 rounded-full text-xs font-medium bg-slate-900 hover:bg-slate-800 text-blue-300 hover:text-white border border-slate-800 hover:border-ait-500/50 transition-all flex items-center space-x-1"
+                    className="px-3 py-1.5 rounded-full text-xs font-medium bg-slate-900 hover:bg-slate-800 text-blue-300 hover:text-white border border-slate-800 hover:border-ait-500/50 transition-all flex items-center space-x-1 shadow-sm"
                   >
                     <Sparkles className="w-3 h-3 text-ait-gold" />
                     <span>{chip}</span>
@@ -431,48 +425,6 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
             )}
           </div>
         ))}
-
-        {/* ChatGPT-style Processing State */}
-        {isLoading && (
-          <div className="flex items-start space-x-3 max-w-2xl">
-            <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-ait-600 to-blue-500 flex items-center justify-center animate-pulse flex-shrink-0 shadow-md">
-              <Sparkles className="w-4 h-4 text-white" />
-            </div>
-            <div className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800/90 space-y-2 flex-1">
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-slate-300">
-                  {PROCESSING_STEPS[processingStepIdx].text}
-                </span>
-                <span className="text-[11px] font-mono text-blue-400">
-                  {PROCESSING_STEPS[processingStepIdx].progress}%
-                </span>
-              </div>
-              <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div
-                  className="bg-gradient-to-r from-ait-600 to-blue-400 h-full rounded-full transition-all duration-500 ease-out"
-                  style={{ width: `${PROCESSING_STEPS[processingStepIdx].progress}%` }}
-                />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Error retry banner */}
-        {errorPrompt && !isLoading && (
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-red-950/40 border border-red-500/30 text-xs text-red-300 max-w-2xl">
-            <div className="flex items-center space-x-2">
-              <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-              <span>Failed to get response for "{errorPrompt.slice(0, 30)}..."</span>
-            </div>
-            <button
-              onClick={() => handleRegenerate(errorPrompt)}
-              className="px-3 py-1 rounded-lg bg-red-600 hover:bg-red-500 text-white font-semibold flex items-center space-x-1"
-            >
-              <RefreshCw className="w-3 h-3" />
-              <span>Try again</span>
-            </button>
-          </div>
-        )}
 
         <div ref={messagesEndRef} />
       </div>
@@ -523,7 +475,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
           </button>
         </form>
         <p className="text-[11px] text-center text-slate-500 mt-2">
-          AIT AI Assistant may produce factual info from verified college databases & portals.
+          AIT AI Assistant provides verified answers from official college repositories.
         </p>
       </div>
 
@@ -547,23 +499,12 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
                 <h4 className="text-sm font-bold text-white">{selectedImage.caption}</h4>
                 <p className="text-xs text-slate-400">{selectedImage.provenance}</p>
               </div>
-              <div className="flex items-center space-x-2">
-                <a
-                  href={selectedImage.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-xl bg-ait-600 hover:bg-ait-500 text-white text-xs font-semibold flex items-center space-x-1"
-                >
-                  <span>Official Page</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </a>
-                <button
-                  onClick={() => setSelectedImage(null)}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold"
-                >
-                  Close
-                </button>
-              </div>
+              <button
+                onClick={() => setSelectedImage(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>

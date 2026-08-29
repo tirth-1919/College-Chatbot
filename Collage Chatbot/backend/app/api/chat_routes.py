@@ -10,13 +10,20 @@ from backend.app.models.entities import User, Conversation, Message, VoiceAsset
 from backend.app.schemas.schemas import ChatRequest, ChatResponse, FeedbackRequest
 from backend.app.security.auth import get_current_user
 from backend.app.security.sanitizer import sanitize_user_input, check_prompt_injection
+from backend.app.security.file_validator import FileSecurityValidator
+from backend.app.config import settings
 from ai.router.intent_router import AIRouter
 from voice.stt.stt_engine import SpeechToTextEngine
 from voice.tts.tts_engine import TextToSpeechEngine
 
 router = APIRouter(prefix="/chat", tags=["Chat & Voice"])
 
-ai_router = AIRouter()
+ai_router = AIRouter(
+    use_ml_intent=True,
+    enable_semantic=settings.SEMANTIC_INTENT_ENABLED,
+    semantic_threshold=settings.SEMANTIC_INTENT_THRESHOLD,
+    context_ttl_seconds=settings.SEMANTIC_CONTEXT_TTL
+)
 stt_engine = SpeechToTextEngine()
 tts_engine = TextToSpeechEngine()
 
@@ -34,10 +41,16 @@ async def send_message(
 
     is_injection, note = check_prompt_injection(sanitized)
     if is_injection:
+        msg_id = f"msg-{int(datetime.now(UTC).timestamp())}"
+        violation_text = "Your request contains safety policy violations and cannot be processed."
         return {
+            "id": msg_id,
+            "message_id": msg_id,
+            "role": "assistant",
             "conversation_id": payload.conversation_id or "conv-default",
-            "message_id": f"msg-{int(datetime.now(UTC).timestamp())}",
-            "answer": "Your request contains safety policy violations and cannot be processed.",
+            "answer": violation_text,
+            "content": violation_text,
+            "status": "complete",
             "intent": "POLICY_VIOLATION",
             "entities": {},
             "selected_source": "SAFETY_GUARD",
@@ -85,6 +98,19 @@ async def send_message(
         conversation_id=conv.id
     )
 
+    # Validate response is non-empty and not a query echo
+    answer_text = response_data.get("answer", response_data.get("content", ""))
+    if not answer_text or not answer_text.strip():
+        answer_text = "I couldn't generate a response right now. Please try asking the question again."
+        response_data["answer"] = answer_text
+        response_data["content"] = answer_text
+
+    # Ensure answer is not just echoing the user's query
+    if answer_text.strip() == sanitized.strip():
+        answer_text = "I'd be happy to help you with that! Could you provide more details about what you'd like to know?"
+        response_data["answer"] = answer_text
+        response_data["content"] = answer_text
+
     # Persist assistant message
     asst_msg = Message(
         conversation_id=conv.id,
@@ -102,7 +128,12 @@ async def send_message(
     db.add(asst_msg)
     db.commit()
 
+    response_data["id"] = asst_msg.id
     response_data["message_id"] = asst_msg.id
+    response_data["role"] = "assistant"
+    response_data["content"] = response_data["answer"]
+    response_data["status"] = "complete"
+    response_data["conversation_id"] = conv.id
     return response_data
 
 @router.post("/voice")
@@ -116,6 +147,13 @@ async def handle_voice_chat(
     final_text = transcript or ""
     detected_lang = "en"
     if file:
+        # Validate audio file
+        validator = FileSecurityValidator()
+        is_valid, error_msg, safe_filename = validator.validate_file(file)
+
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=f"File validation failed: {error_msg}")
+
         audio_bytes = await file.read()
         stt_result = stt_engine.transcribe_audio_bytes(audio_bytes)
         final_text = stt_result.get("transcript", "")
@@ -208,4 +246,40 @@ def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Message not found")
     msg.feedback = payload.feedback
     db.commit()
+
+    # If student provided negative feedback, queue for controlled intent training review
+    if payload.feedback in ["unhelpful", "reported"]:
+        from backend.app.models.entities import TrainingExample
+        from backend.app.security.pii import PIIDetector
+        detector = PIIDetector()
+
+        # Find the user's question before this assistant response
+        user_msg = (
+            db.query(Message)
+            .filter(Message.conversation_id == msg.conversation_id, Message.role == "user", Message.created_at <= msg.created_at)
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        if user_msg and user_msg.content:
+            raw_text = user_msg.content.strip()
+            # Redact any PII before staging candidate training example
+            scrubbed_text = detector.redact_pii(raw_text)
+            if scrubbed_text:
+                existing = db.query(TrainingExample).filter(TrainingExample.text == scrubbed_text).first()
+                if not existing:
+                    example = TrainingExample(
+                        text=scrubbed_text,
+                        language=user_msg.language or "en",
+                        predicted_intent=msg.intent,
+                        status="PENDING",
+                        source="STUDENT_FEEDBACK",
+                        metadata_json={
+                            "comment": payload.comment,
+                            "message_id": msg.id,
+                            "was_scrubbed": (scrubbed_text != raw_text)
+                        }
+                    )
+                    db.add(example)
+                    db.commit()
+
     return {"success": True, "message_id": msg.id, "feedback": payload.feedback}

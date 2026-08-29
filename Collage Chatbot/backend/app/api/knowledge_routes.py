@@ -1,13 +1,14 @@
 from datetime import datetime, UTC
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models.entities import (
-    KnowledgeSource, KnowledgeDocument, KnowledgeChunk, KnowledgeConflict, Notice, AuditLog, Fee, Course
+    KnowledgeSource, KnowledgeDocument, KnowledgeChunk, KnowledgeConflict, Notice, AuditLog, Fee, Course, PendingKnowledgeUpdate
 )
-from backend.app.schemas.schemas import KnowledgeConflictSchema, ResolveConflictRequest, NoticeSchema
-from backend.app.security.auth import require_role
+from backend.app.schemas.schemas import KnowledgeConflictSchema, ResolveConflictRequest, NoticeSchema, RejectKnowledgeRequest
+from backend.app.security.auth import require_role, get_current_user
+from backend.app.services.knowledge_sync_service import KnowledgeSyncService
 from rag.crawlers.ait.crawler import AITWebsiteCrawler
 from rag.chunkers.chunker import DocumentChunker
 
@@ -57,57 +58,59 @@ def get_sources(db: Session = Depends(get_db)):
     ]
 
 @router.post("/sync/website", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
-async def trigger_website_sync(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    # Trigger AIT portal sync
-    seed_urls = crawler.get_seed_urls()
-
-    # Run sync on seed pages
-    synced_pages = 0
-    for url in seed_urls[:5]: # Quick sync high-value pages
-        page_data = await crawler.crawl_page(url)
-        if page_data:
-            synced_pages += 1
-            # Update or create source
-            src = db.query(KnowledgeSource).filter(KnowledgeSource.source_url == url).first()
-            if not src:
-                src = KnowledgeSource(
-                    source_type="WEBSITE_CRAWL",
-                    source_url=url,
-                    source_page=page_data["title"],
-                    title=page_data["title"],
-                    content_hash=page_data["content_hash"]
-                )
-                db.add(src)
-                db.flush()
-
-            # Create document & chunks
-            doc = KnowledgeDocument(
-                source_id=src.id,
-                title=page_data["title"],
-                doc_type="HTML",
-                raw_content=page_data["raw_html"],
-                clean_text=page_data["clean_text"]
-            )
-            db.add(doc)
-            db.flush()
-
-            chunks = chunker.chunk_text(page_data["clean_text"], {"source_url": url, "title": page_data["title"]})
-            for ch in chunks:
-                k_chunk = KnowledgeChunk(
-                    document_id=doc.id,
-                    chunk_index=ch["chunk_index"],
-                    content=ch["content"],
-                    keywords=ch.get("keywords", ""),
-                    section_title=page_data["title"]
-                )
-                db.add(k_chunk)
-
-    db.commit()
+async def trigger_website_sync(
+    background_tasks: BackgroundTasks,
+    current_user: Optional[Any] = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    service = KnowledgeSyncService(db)
+    actor_id = current_user.id if current_user else "ADMIN"
+    report = await service.sync_official_website(actor_id=actor_id)
     return {
         "success": True,
-        "message": f"Successfully synchronized {synced_pages} pages from AIT official portal (https://www.aitindia.in)",
-        "timestamp": datetime.now(UTC).isoformat()
+        "message": f"Synchronized AIT official portal: {report['new_pending']} new pending, {report['modified_pending']} modified, {report['unchanged']} unchanged.",
+        "report": report
     }
+
+@router.get("/pending", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
+def get_pending_updates(db: Session = Depends(get_db)):
+    updates = db.query(PendingKnowledgeUpdate).filter(PendingKnowledgeUpdate.approval_status == "PENDING").all()
+    return [
+        {
+            "id": u.id,
+            "source_id": u.source_id,
+            "source_url": u.source_url,
+            "title": u.title,
+            "category": u.category,
+            "source_type": u.source_type,
+            "old_value": u.old_value,
+            "new_value": u.new_value,
+            "change_type": u.change_type,
+            "change_summary": u.change_summary,
+            "content_hash": u.content_hash,
+            "approval_status": u.approval_status,
+            "detected_at": u.detected_at.isoformat() if u.detected_at else ""
+        }
+        for u in updates
+    ]
+
+@router.post("/{update_id}/approve", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
+def approve_update(update_id: str, current_user: Optional[Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    service = KnowledgeSyncService(db)
+    approved_by = current_user.email if current_user else "ADMIN"
+    return service.approve_pending_update(update_id, approved_by=approved_by)
+
+@router.post("/{update_id}/reject", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
+def reject_update(update_id: str, payload: Optional[RejectKnowledgeRequest] = None, current_user: Optional[Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    service = KnowledgeSyncService(db)
+    rejected_by = current_user.email if current_user else "ADMIN"
+    return service.reject_pending_update(update_id, rejected_by=rejected_by, reason=payload.reason if payload else None)
+
+@router.post("/rag/reindex", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
+def reindex_rag(current_user: Optional[Any] = Depends(get_current_user), db: Session = Depends(get_db)):
+    service = KnowledgeSyncService(db)
+    actor_id = current_user.email if current_user else "ADMIN"
+    return service.reindex_all_approved_knowledge(actor_id=actor_id)
 
 # ----------------- Knowledge Conflicts -----------------
 @router.get("/conflicts")
@@ -175,3 +178,21 @@ def resolve_conflict(payload: ResolveConflictRequest, db: Session = Depends(get_
         "conflict_id": conflict.id,
         "resolution": payload.resolution_choice
     }
+
+@router.post("/conflicts/reopen", dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))])
+def reopen_conflict(conflict_id: str, db: Session = Depends(get_db)):
+    conflict = db.query(KnowledgeConflict).filter(KnowledgeConflict.id == conflict_id).first()
+    if not conflict:
+        raise HTTPException(status_code=404, detail="Conflict not found")
+
+    conflict.status = "OPEN"
+    conflict.resolved_at = None
+    audit = AuditLog(
+        actor_role="ADMIN",
+        action="REOPEN_KNOWLEDGE_CONFLICT",
+        target_entity="KnowledgeConflict",
+        details={"conflict_id": conflict.id, "topic": conflict.topic}
+    )
+    db.add(audit)
+    db.commit()
+    return {"success": True, "message": f"Conflict for '{conflict.topic}' reopened for review"}

@@ -1,0 +1,182 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "title": "Total Registered Users",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "ait_users_total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "title": "Active Knowledge Conflicts",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "ait_active_conflicts_total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "title": "Official Knowledge Sources",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "ait_knowledge_sources_total",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "title": "Voice STT/TTS Operations",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(ait_voice_operations_total)",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 5,
+      "title": "AI Query Volume by Intent",
+      "type": "bargauge",
+      "targets": [
+        {
+          "expr": "ait_ai_chat_requests_total",
+          "legendFormat": "{{intent}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 6,
+      "title": "3-Tier Source Hierarchy Distribution",
+      "type": "piechart",
+      "targets": [
+        {
+          "expr": "ait_source_queries_total",
+          "legendFormat": "{{source}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "id": 7,
+      "title": "Cache Performance (Hits vs Misses)",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "ait_cache_hits_total",
+          "legendFormat": "Hits",
+          "refId": "A"
+        },
+        {
+          "expr": "ait_cache_misses_total",
+          "legendFormat": "Misses",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 8,
+      "title": "Grounding Guard Verifications",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "ait_grounding_validations_total",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [
+    "ait",
+    "assistant",
+    "production"
+  ],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AIT AI Assistant — Production Health & Observability",
+  "version": 1
+}

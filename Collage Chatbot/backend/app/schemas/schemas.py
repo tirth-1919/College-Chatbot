@@ -205,7 +205,11 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: str
     message_id: str
+    id: Optional[str] = None
+    role: str = "assistant"
     answer: str
+    content: Optional[str] = None
+    status: str = "complete"
     intent: str
     entities: Dict[str, Any] = {}
     selected_source: str
@@ -246,3 +250,10 @@ class AuditLogSchema(BaseModel):
     target_entity: str
     details: Dict[str, Any]
     timestamp: datetime
+
+class ApproveTrainingExampleRequest(BaseModel):
+    approved_intent: str
+
+class RejectKnowledgeRequest(BaseModel):
+    reason: Optional[str] = None
+

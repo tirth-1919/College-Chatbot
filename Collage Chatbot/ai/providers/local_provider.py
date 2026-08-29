@@ -49,10 +49,30 @@ class LocalProvider(AIProvider):
     def _synthesize_fallback(self, prompt: str, context: Optional[str]) -> str:
         if context and context.strip():
             return f"Based on verified AIT records:\n\n{context.strip()}"
-        return (
-            "I could not verify this information from authoritative Ahmedabad Institute of Technology (AIT) sources. "
-            "Please check the official portal at https://www.aitindia.in or contact the college administration office."
-        )
+        
+        # Generate context-aware fallback without echoing the query
+        prompt_lower = prompt.lower().strip()
+        
+        # Educational topic fallbacks
+        if any(word in prompt_lower for word in ["python", "java", "dbms", "normalization", "machine learning", "ai", "algorithm"]):
+            return (
+                "I'd be happy to help you learn about this topic! Could you tell me what specific aspect you'd like to explore? "
+                "For example, are you looking for definitions, practical examples, implementation details, or study resources?"
+            )
+        elif any(word in prompt_lower for word in ["university", "college", "best", "compare"]):
+            return (
+                "Choosing the right university or college depends on your course preferences, budget, location, placement records, and campus facilities. "
+                "If you tell me your target program and preferred location, I can help you evaluate suitable options."
+            )
+        elif any(word in prompt_lower for word in ["exam", "study", "prepare", "viva"]):
+            return (
+                "I can help you with exam preparation and study strategies! Would you like guidance on specific subjects, time management techniques, or practice questions?"
+            )
+        else:
+            return (
+                "I'd be happy to help you with that! Could you provide more details about what you'd like to know? "
+                "I can assist with AIT-specific information (courses, fees, faculty, facilities) or general academic questions."
+            )
 
     async def generate_stream(
         self,

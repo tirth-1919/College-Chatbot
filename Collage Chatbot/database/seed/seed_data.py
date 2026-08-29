@@ -37,7 +37,7 @@ def seed_database():
         dept_cse = Department(code="CSE", name="Department of Computer Engineering", head_of_department="Dr. Samir Shah")
         dept_it = Department(code="IT", name="Department of Information Technology", head_of_department="Prof. Neha Trivedi")
         dept_mgmt = Department(code="MGMT", name="Department of Management Studies", head_of_department="Dr. Priya Mehta")
-        
+
         db.add_all([dept_ca, dept_cse, dept_it, dept_mgmt])
         db.flush()
 
@@ -455,6 +455,31 @@ def seed_database():
             )
         ]
         db.add_all(notices)
+
+        # 12b. Student Exam Results (Dharmik Patel)
+        res_dbms = Result(
+            student_enrollment="210020107001",
+            course_id=course_bca.id,
+            subject_code="BCA401",
+            subject_name="Database Management Systems",
+            semester=4,
+            grade="AA",
+            spi=8.50,
+            cpi=8.40,
+            academic_year="2026-27"
+        )
+        res_python = Result(
+            student_enrollment="210020107001",
+            course_id=course_bca.id,
+            subject_code="BCA402",
+            subject_name="Python Programming",
+            semester=4,
+            grade="AB",
+            spi=8.50,
+            cpi=8.40,
+            academic_year="2026-27"
+        )
+        db.add_all([res_dbms, res_python])
 
         # 13. Knowledge Source & RAG Document Seed
         ks_main = KnowledgeSource(

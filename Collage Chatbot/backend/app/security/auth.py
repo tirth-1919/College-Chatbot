@@ -79,3 +79,28 @@ def require_role(allowed_roles: List[str]):
             )
         return current_user
     return role_checker
+
+
+def create_reauth_token(user_id: str, purpose: str = "DESTRUCTIVE_ACTION") -> str:
+    """Generate a short-lived token specifically for executing destructive operations"""
+    expire = datetime.now(UTC) + timedelta(minutes=settings.REAUTH_TOKEN_EXPIRE_MINUTES)
+    payload = {
+        "sub": user_id,
+        "purpose": purpose,
+        "scope": "destructive_action",
+        "jti": hashlib.sha256(f"{user_id}:{expire.timestamp()}".encode()).hexdigest()[:16],
+        "exp": expire
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+def verify_reauth_token(token: str, expected_user_id: str, db: Session) -> bool:
+    """Verify short-lived re-auth token for destructive action execution"""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("scope") != "destructive_action":
+            return False
+        if payload.get("sub") != expected_user_id:
+            return False
+        return True
+    except JWTError:
+        return False

@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: 'AIT AI Assistant Dashboards'
+    orgId: 1
+    folder: 'AIT Monitoring'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/dashboards

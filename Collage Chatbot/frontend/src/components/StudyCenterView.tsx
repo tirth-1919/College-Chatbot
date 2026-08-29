@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { BookOpen, Sparkles, CheckCircle, Brain, Target, RotateCcw, Award } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { BookOpen, Sparkles, CheckCircle, Brain, Target, RotateCcw, Award, Calendar, Clock, ArrowRight, ListChecks } from 'lucide-react';
+import { api } from '../services/api';
 
 export const StudyCenterView: React.FC = () => {
   const [activeModule, setActiveModule] = useState<'quiz' | 'flashcards' | 'planner'>('quiz');
@@ -7,6 +8,35 @@ export const StudyCenterView: React.FC = () => {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<number, number>>({});
   const [activeFlashcard, setActiveFlashcard] = useState(0);
   const [flipped, setFlipped] = useState(false);
+
+  // Study Planner States
+  const [studyPlan, setStudyPlan] = useState<any | null>(null);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [studyHours, setStudyHours] = useState<number>(3);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>('en');
+
+  useEffect(() => {
+    if (activeModule === 'planner' && !studyPlan) {
+      handleGeneratePlan();
+    }
+  }, [activeModule]);
+
+  const handleGeneratePlan = async () => {
+    setIsGeneratingPlan(true);
+    try {
+      const plan = await api.generateStudyPlan({
+        course_code: 'BCA',
+        semester: 4,
+        available_hours_per_day: studyHours,
+        language: selectedLanguage,
+      });
+      setStudyPlan(plan);
+    } catch (err) {
+      console.error('Failed to generate plan:', err);
+    } finally {
+      setIsGeneratingPlan(false);
+    }
+  };
 
   const quizQuestions = [
     {
@@ -70,6 +100,15 @@ export const StudyCenterView: React.FC = () => {
         {/* Module Switcher */}
         <div className="flex items-center space-x-1 glass-card p-1 rounded-xl border border-slate-800">
           <button
+            onClick={() => setActiveModule('planner')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center space-x-1 ${
+              activeModule === 'planner' ? 'bg-ait-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>GTU Exam Planner</span>
+          </button>
+          <button
             onClick={() => setActiveModule('quiz')}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
               activeModule === 'quiz' ? 'bg-ait-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'
@@ -87,6 +126,121 @@ export const StudyCenterView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* GTU Exam Countdown & AI Study Planner Module */}
+      {activeModule === 'planner' && (
+        <div className="space-y-6">
+          {/* Real-time GTU Exam Countdown Banner */}
+          {studyPlan && studyPlan.nearest_exam && (
+            <div className="glass-card rounded-2xl p-6 border border-ait-500/30 bg-gradient-to-r from-ait-900/30 via-slate-900 to-slate-900 flex flex-col md:flex-row items-center justify-between gap-4">
+              <div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-ait-500/20 text-ait-300 border border-ait-500/30 uppercase tracking-wide">
+                  Official GTU / AIT Exam Notification
+                </span>
+                <h3 className="text-lg font-bold text-white mt-1.5">
+                  {studyPlan.nearest_exam.subject_name} ({studyPlan.nearest_exam.subject_code})
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Date: {studyPlan.nearest_exam.exam_date} | Time: {studyPlan.nearest_exam.start_time} | Hall: {studyPlan.nearest_exam.room_number}
+                </p>
+              </div>
+
+              <div className="flex items-center space-x-3 text-center">
+                <div className="glass-panel px-4 py-2 rounded-xl border border-ait-500/30">
+                  <div className="text-2xl font-bold font-mono text-ait-gold">{studyPlan.exam_countdown_days}</div>
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">Days</div>
+                </div>
+                <div className="text-xl font-bold text-slate-500">:</div>
+                <div className="glass-panel px-4 py-2 rounded-xl border border-ait-500/30">
+                  <div className="text-2xl font-bold font-mono text-ait-gold">{studyPlan.exam_countdown_hours}</div>
+                  <div className="text-[10px] uppercase text-slate-400 font-semibold">Hours</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Planner Controls */}
+          <div className="glass-card rounded-2xl p-5 border border-slate-800 flex flex-wrap items-center justify-between gap-4">
+            <div className="flex items-center space-x-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Available Study Hours / Day</label>
+                <select
+                  value={studyHours}
+                  onChange={(e) => setStudyHours(Number(e.target.value))}
+                  className="glass-input px-3 py-1.5 rounded-lg text-xs text-white"
+                >
+                  <option value={2} className="bg-slate-900">2 Hours / day</option>
+                  <option value={3} className="bg-slate-900">3 Hours / day</option>
+                  <option value={5} className="bg-slate-900">5 Hours / day (Intensive)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Language</label>
+                <select
+                  value={selectedLanguage}
+                  onChange={(e) => setSelectedLanguage(e.target.value)}
+                  className="glass-input px-3 py-1.5 rounded-lg text-xs text-white"
+                >
+                  <option value="en" className="bg-slate-900">English</option>
+                  <option value="gu" className="bg-slate-900">ગુજરાતી (Gujarati)</option>
+                  <option value="hi" className="bg-slate-900">हिन्दी (Hindi)</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={handleGeneratePlan}
+              disabled={isGeneratingPlan}
+              className="px-4 py-2 rounded-xl bg-ait-600 hover:bg-ait-500 text-white text-xs font-semibold shadow-lg shadow-ait-600/30 flex items-center space-x-2 transition-all"
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isGeneratingPlan ? 'animate-spin' : ''}`} />
+              <span>{isGeneratingPlan ? 'Optimizing Schedule...' : 'Regenerate Study Plan'}</span>
+            </button>
+          </div>
+
+          {/* Daily Schedule Blocks */}
+          {studyPlan && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="glass-card rounded-2xl p-5 border border-slate-800 space-y-4">
+                <h4 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <Clock className="w-4 h-4 text-ait-400" />
+                  <span>Daily Topic Allocation ({studyHours}h Total)</span>
+                </h4>
+                <div className="space-y-3">
+                  {studyPlan.daily_schedule?.map((slot: any, idx: number) => (
+                    <div key={idx} className="glass-panel p-3 rounded-xl border border-slate-800/80 flex items-start justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-slate-200">{slot.subject} ({slot.subject_code})</div>
+                        <div className="text-[11px] text-slate-400 mt-0.5">Focus: {slot.focus_area}</div>
+                      </div>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        slot.priority === 'HIGH' ? 'bg-red-500/20 text-red-300 border border-red-500/30' : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {slot.slot}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="glass-card rounded-2xl p-5 border border-slate-800 space-y-4">
+                <h4 className="text-sm font-bold text-white flex items-center space-x-2">
+                  <ListChecks className="w-4 h-4 text-emerald-400" />
+                  <span>Recommended Study Tactics</span>
+                </h4>
+                <ul className="space-y-2.5">
+                  {studyPlan.recommendations?.map((rec: string, idx: number) => (
+                    <li key={idx} className="text-xs text-slate-300 flex items-start space-x-2 glass-panel p-2.5 rounded-xl border border-slate-800">
+                      <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Quiz Module */}
       {activeModule === 'quiz' && (

@@ -97,3 +97,58 @@ def get_current_user_profile(current_user: User = Depends(require_authenticated_
         "current_semester": current_user.current_semester,
         "created_at": current_user.created_at.isoformat()
     }
+
+
+from pydantic import BaseModel
+
+class ReAuthRequest(BaseModel):
+    password: str
+    action_type: str = "DESTRUCTIVE_ACTION"
+
+class ReAuthResponse(BaseModel):
+    success: bool
+    reauth_token: str
+    expires_in_minutes: int
+    message: str
+
+@router.post("/reauth", response_model=ReAuthResponse)
+def reauthenticate_admin(
+    payload: ReAuthRequest,
+    current_user: User = Depends(require_authenticated_user),
+    db: Session = Depends(get_db)
+):
+    from backend.app.models.entities import AuditLog
+    from backend.app.security.auth import verify_password, create_reauth_token
+
+    if not verify_password(payload.password, current_user.hashed_password):
+        # Audit failed re-authentication attempt
+        audit_failed = AuditLog(
+            actor_role=current_user.roles[0].name if current_user.roles else "USER",
+            action="REAUTH_FAILED",
+            target_entity="UserSecurity",
+            details={"email": current_user.email, "action_type": payload.action_type, "status": "DENIED"}
+        )
+        db.add(audit_failed)
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Re-authentication failed: Invalid password"
+        )
+
+    # Success audit
+    audit_ok = AuditLog(
+        actor_role=current_user.roles[0].name if current_user.roles else "USER",
+        action="REAUTH_SUCCESS",
+        target_entity="UserSecurity",
+        details={"email": current_user.email, "action_type": payload.action_type, "status": "GRANTED"}
+    )
+    db.add(audit_ok)
+    db.commit()
+
+    reauth_token = create_reauth_token(current_user.id, purpose=payload.action_type)
+    return {
+        "success": True,
+        "reauth_token": reauth_token,
+        "expires_in_minutes": settings.REAUTH_TOKEN_EXPIRE_MINUTES,
+        "message": "Re-authentication successful. Token authorized for destructive operation."
+    }

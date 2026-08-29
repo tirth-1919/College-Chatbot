@@ -290,18 +290,59 @@ class Notice(Base):
 class KnowledgeSource(Base):
     __tablename__ = "knowledge_sources"
     id = Column(String, primary_key=True, default=generate_uuid)
-    source_type = Column(String(50), nullable=False) # WEBSITE_CRAWL, OFFICIAL_DOCUMENT, ADMIN_ENTRY
+    source_type = Column(String(50), nullable=False) # OFFICIAL_WEBSITE, OFFICIAL_PDF, ADMIN_DATABASE, ADMIN_DOCUMENT, RAG_DOCUMENT, GEMINI, WEBSITE_CRAWL
     source_url = Column(String(500), nullable=False)
+    canonical_url = Column(String(500), nullable=True)
     source_page = Column(String(255), nullable=True)
     title = Column(String(255), nullable=False)
     authority_score = Column(Float, default=1.0) # 1.0 for official website/docs
     content_hash = Column(String(64), nullable=True)
+    raw_content = Column(Text, nullable=True)
+    clean_text = Column(Text, nullable=True)
+    category = Column(String(100), default="General")
+    is_official = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=True)
+    approval_status = Column(String(30), default="APPROVED") # PENDING, APPROVED, REJECTED, ARCHIVED
     retrieved_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_crawled_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_changed_at = Column(DateTime, nullable=True)
     verification_status = Column(String(30), default="VERIFIED")
     ai_visible = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    last_verified_at = Column(DateTime, nullable=True)
+    verified_by = Column(String(100), nullable=True)
+    expiry_date = Column(DateTime, nullable=True)
+    is_stale = Column(Boolean, default=False)
+    version = Column(Integer, default=1)
+    source_metadata = Column(JSON, default=dict)
 
     documents = relationship("KnowledgeDocument", back_populates="source", cascade="all, delete-orphan")
+    pending_updates = relationship("PendingKnowledgeUpdate", back_populates="source", cascade="all, delete-orphan")
+
+class PendingKnowledgeUpdate(Base):
+    __tablename__ = "pending_knowledge_updates"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    source_id = Column(String, ForeignKey("knowledge_sources.id"), nullable=True)
+    source_url = Column(String(500), nullable=False)
+    title = Column(String(255), nullable=False)
+    category = Column(String(100), default="General")
+    source_type = Column(String(50), default="OFFICIAL_WEBSITE") # OFFICIAL_WEBSITE, OFFICIAL_PDF, ADMIN_DOCUMENT
+    old_value = Column(Text, nullable=True)
+    new_value = Column(Text, nullable=False)
+    clean_text = Column(Text, nullable=True)
+    change_type = Column(String(50), default="MODIFIED") # NEW, MODIFIED, DELETED
+    change_summary = Column(Text, nullable=True)
+    content_hash = Column(String(64), nullable=False)
+    approval_status = Column(String(30), default="PENDING") # PENDING, APPROVED, REJECTED, ARCHIVED
+    detected_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by = Column(String(100), nullable=True)
+    rejection_reason = Column(Text, nullable=True)
+    update_metadata = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    source = relationship("KnowledgeSource", back_populates="pending_updates")
 
 class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
@@ -315,6 +356,13 @@ class KnowledgeDocument(Base):
     version = Column(Integer, default=1)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    total_pages = Column(Integer, default=0)
+    language = Column(String(10), default="en")
+    ocr_processed = Column(Boolean, default=False)
+    security_scanned = Column(Boolean, default=False)
+    security_scan_result = Column(String(30), default="PENDING") # PENDING, CLEAN, MALICIOUS
+    file_hash = Column(String(64), nullable=True)
 
     source = relationship("KnowledgeSource", back_populates="documents")
     chunks = relationship("KnowledgeChunk", back_populates="document", cascade="all, delete-orphan")
@@ -328,6 +376,22 @@ class KnowledgeChunk(Base):
     embedding_json = Column(JSON, nullable=True) # Stored vector representation
     keywords = Column(String(500), nullable=True)
     section_title = Column(String(255), nullable=True)
+    page_number = Column(Integer, nullable=True)
+    paragraph_index = Column(Integer, nullable=True)
+    heading_level = Column(Integer, nullable=True) # 1-6 for h1-h6
+    chunk_metadata = Column(JSON, default=dict)
+    department = Column(String(100), nullable=True)
+    course = Column(String(50), nullable=True)
+    semester = Column(Integer, nullable=True)
+    subject = Column(String(100), nullable=True)
+    academic_year = Column(String(20), nullable=True)
+    source_type = Column(String(50), nullable=True)
+    event = Column(String(200), nullable=True)
+    date = Column(String(30), nullable=True)
+    language = Column(String(10), default="en")
+    verification_status = Column(String(30), default="VERIFIED")
+    freshness_score = Column(Float, default=1.0)
+    last_updated = Column(DateTime, default=lambda: datetime.now(UTC))
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     document = relationship("KnowledgeDocument", back_populates="chunks")
@@ -424,6 +488,21 @@ class AuditLog(Base):
 
 # ----------------- 6. ML Models & Datasets Registry -----------------
 
+class TrainingExample(Base):
+    __tablename__ = "training_examples"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    text = Column(Text, nullable=False)
+    language = Column(String(10), default="en")
+    predicted_intent = Column(String(100), nullable=True)
+    approved_intent = Column(String(100), nullable=True)
+    status = Column(String(30), default="PENDING") # PENDING, APPROVED, REJECTED
+    source = Column(String(50), default="STUDENT_FEEDBACK") # STUDENT_FEEDBACK, ADMIN_ENTRY, SYNTHETIC
+    confidence = Column(Float, default=1.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    approved_at = Column(DateTime, nullable=True)
+    approved_by = Column(String(100), nullable=True)
+    metadata_json = Column(JSON, default=dict)
+
 class MLDataset(Base):
     __tablename__ = "ml_datasets"
     id = Column(String, primary_key=True, default=generate_uuid)
@@ -446,4 +525,61 @@ class MLModel(Base):
     f1_score = Column(Float, default=0.0)
     is_active = Column(Boolean, default=False)
     model_path = Column(String(500), nullable=True)
+    dataset_version = Column(String(20), nullable=True)
+    deployment_state = Column(String(30), default="PENDING") # PENDING, DEPLOYED, ROLLED_BACK
+    validation_status = Column(String(30), default="PENDING") # PENDING, VALIDATED, FAILED
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+# ----------------- 7. Website Sync & Freshness Tracking -----------------
+
+class WebsiteSyncState(Base):
+    __tablename__ = "website_sync_states"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    source_url = Column(String(500), nullable=False, index=True)
+    content_hash = Column(String(64), nullable=False, index=True)
+    first_discovered_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_fetched_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_changed_at = Column(DateTime, nullable=True)
+    indexed_at = Column(DateTime, nullable=True)
+    freshness_status = Column(String(30), default="FRESH") # FRESH, STALE, UNKNOWN
+    sync_status = Column(String(30), default="PENDING") # PENDING, SYNCED, FAILED
+    current_version = Column(Integer, default=1)
+    previous_version = Column(Integer, nullable=True)
+    is_active = Column(Boolean, default=True)
+    page_title = Column(String(255), nullable=True)
+    change_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+class WebsiteContentVersion(Base):
+    __tablename__ = "website_content_versions"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    source_url = Column(String(500), nullable=False, index=True)
+    version_number = Column(Integer, nullable=False)
+    content_hash = Column(String(64), nullable=False)
+    change_type = Column(String(30), default="INITIAL") # INITIAL, MODIFIED, DELETED
+    change_summary = Column(Text, nullable=True)
+    previous_content_hash = Column(String(64), nullable=True)
+    raw_html = Column(Text, nullable=True)
+    clean_text = Column(Text, nullable=True)
+    page_title = Column(String(255), nullable=True)
+    change_timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
+    indexed_at = Column(DateTime, nullable=True)
+    is_current = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+class WebsiteSyncReport(Base):
+    __tablename__ = "website_sync_reports"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    sync_timestamp = Column(DateTime, default=lambda: datetime.now(UTC))
+    total_pages_processed = Column(Integer, default=0)
+    new_pages = Column(Integer, default=0)
+    modified_pages = Column(Integer, default=0)
+    unchanged_pages = Column(Integer, default=0)
+    deleted_pages = Column(Integer, default=0)
+    failed_pages = Column(Integer, default=0)
+    sync_duration_seconds = Column(Float, default=0.0)
+    status = Column(String(30), default="COMPLETED") # COMPLETED, PARTIAL, FAILED
+    error_details = Column(JSON, default=list)
+    sync_summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))

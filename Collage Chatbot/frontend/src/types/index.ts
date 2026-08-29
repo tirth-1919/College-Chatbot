@@ -33,6 +33,10 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  answer?: string;
+  status?: 'thinking' | 'complete' | 'error';
+  conversation_id?: string;
+  message_id?: string;
   language?: string;
   intent?: string;
   entities?: Record<string, any>;
@@ -161,3 +165,39 @@ export interface DashboardMetrics {
   active_ml_model: string;
   system_status: string;
 }
+
+export interface PendingKnowledgeItem {
+  id: string;
+  source_id?: string;
+  source_url: string;
+  title: string;
+  category: string;
+  source_type: string;
+  old_value?: string;
+  new_value: string;
+  change_type: string;
+  change_summary?: string;
+  content_hash: string;
+  approval_status: string;
+  detected_at: string;
+  reviewed_at?: string;
+  reviewed_by?: string;
+  rejection_reason?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface TrainingExampleItem {
+  id: string;
+  text: string;
+  language: string;
+  predicted_intent?: string;
+  approved_intent?: string;
+  status: string;
+  source: string;
+  confidence: number;
+  created_at: string;
+  approved_at?: string;
+  approved_by?: string;
+  metadata?: Record<string, any>;
+}
+
