@@ -1,8 +1,20 @@
 .env
 .env.*
 !.env.example
+
 .venv/
 venv/
 __pycache__/
 *.pyc
 *.log
+
+# Node
+node_modules/
+
+# Vite build
+dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
