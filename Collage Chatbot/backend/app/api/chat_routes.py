@@ -5,9 +5,10 @@ from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 from pydantic import BaseModel
 from backend.app.database import get_db
-from backend.app.models.entities import User, Conversation, Message, VoiceAsset
+from backend.app.models.entities import User, Conversation, Message, VoiceAsset, Attachment, Project
 from backend.app.schemas.schemas import ChatRequest, ChatResponse, FeedbackRequest
 from backend.app.security.auth import get_current_user, require_authenticated_user
 from backend.app.security.sanitizer import sanitize_user_input, check_prompt_injection
@@ -72,10 +73,19 @@ async def send_message(
         if conv and conv.user_id:
             if not current_user or conv.user_id != current_user.id:
                 raise HTTPException(status_code=403, detail="Access to this conversation is denied")
-    
+
+    if payload.project_id:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required for project chat")
+        project = db.query(Project).filter(Project.id == payload.project_id, Project.owner_id == current_user.id, Project.is_archived.is_(False)).first()
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        if conv and conv.project_id != project.id:
+            raise HTTPException(status_code=403, detail="Conversation is outside this project")
     if not conv:
         conv = Conversation(
             user_id=current_user.id if current_user else None,
+            project_id=payload.project_id,
             title=sanitized[:40] + ("..." if len(sanitized) > 40 else ""),
             mode=payload.mode
         )
@@ -83,27 +93,41 @@ async def send_message(
         db.commit()
         db.refresh(conv)
 
-    # Persist user message with voice mode indicator
-    user_msg = Message(
-        conversation_id=conv.id,
-        role="user",
-        content=sanitized,
-        language=payload.language or "en",
-        # Voice mode is tracked at conversation level, but we can add metadata
-        source_metadata={"input_mode": "voice" if payload.mode == "VOICE" else "text"}
-    )
-    db.add(user_msg)
-    db.commit()
+    # Regeneration reuses the prior prompt and must not create a duplicate user turn.
+    if not payload.regenerate:
+        user_msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            content=sanitized,
+            language=payload.language or "en",
+            source_metadata={"input_mode": "voice" if payload.mode == "VOICE" else "text"}
+        )
+        db.add(user_msg)
+        db.commit()
 
-    # Route and respond via AI Router
+    # Resolve attachments by authenticated ownership and conversation lineage.
+    attachment_context = ""
+    if payload.attachment_ids:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Authentication required to use attachments")
+        attachments = db.query(Attachment).filter(
+            Attachment.id.in_(payload.attachment_ids), Attachment.user_id == current_user.id,
+            Attachment.deleted_at.is_(None),
+            (Attachment.conversation_id.is_(None) | (Attachment.conversation_id == conv.id))
+        ).all()
+        if len(attachments) != len(set(payload.attachment_ids)):
+            raise HTTPException(status_code=403, detail="Access to this attachment is denied")
+        attachment_context = "\n\n".join(
+            f"Source: {item.filename}\n{(item.extracted_text or '')[:12000]}" for item in attachments
+        )
+
+    # Preserve the existing SourceResolver as the single orchestration layer.
     role = "STUDENT" if current_user else "PUBLIC"
+    routed_query = f"{sanitized}\n\nAttached file context:\n{attachment_context}" if attachment_context else sanitized
     response_data = await ai_router.route_and_respond(
-        db=db,
-        query=sanitized,
-        user_id=current_user.id if current_user else None,
-        role=role,
-        mode=payload.mode,
-        conversation_id=conv.id
+        db=db, query=routed_query, user_id=current_user.id if current_user else None,
+        role=role, mode=payload.mode, conversation_id=conv.id,
+        think=payload.think, tool=payload.tool
     )
 
     # Validate response is non-empty and not a query echo
@@ -113,10 +137,10 @@ async def send_message(
         response_data["answer"] = answer_text
         response_data["content"] = answer_text
 
-    # Ensure answer is not just echoing the user's query
+    # The resolver owns fallback behavior. Do not replace a valid generated answer
+    # with a clarification message at the HTTP boundary.
     if answer_text.strip() == sanitized.strip():
-        # Let the resolver handle this with Gemini instead of generic fallback
-        answer_text = "I'd be happy to help you with that! Could you provide more details about what you'd like to know?"
+        answer_text = "I'm having trouble processing that right now. Please try again."
         response_data["answer"] = answer_text
         response_data["content"] = answer_text
 
@@ -155,7 +179,7 @@ async def handle_voice_chat(
 ):
     final_text = transcript or ""
     detected_lang = "en"
-    
+
     if file:
         # Validate audio file
         validator = FileSecurityValidator()
@@ -186,31 +210,52 @@ async def handle_voice_chat(
     }
 
 @router.get("/voice-asset/{asset_id}")
-def get_voice_audio(asset_id: str, db: Session = Depends(get_db)):
+def get_voice_audio(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user)
+):
     asset = db.query(VoiceAsset).filter(VoiceAsset.id == asset_id).first()
+    if asset:
+        owning_message = db.query(Message).join(Conversation).filter(
+            Message.voice_asset_id == asset_id
+        ).first()
+        if owning_message and owning_message.conversation.user_id:
+            if not current_user or owning_message.conversation.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Access to this voice asset is denied")
     if not asset or not os.path.exists(asset.file_path):
         raise HTTPException(status_code=404, detail="Voice audio asset not found")
     return FileResponse(asset.file_path, media_type="audio/wav")
 
 @router.get("/conversations")
 def list_conversations(
-    search: Optional[str] = Query(None, description="Search conversations by title"),
+    search: Optional[str] = Query(None, max_length=120, description="Search conversation titles and messages"),
+    page: int = Query(1, ge=1, le=10000),
+    page_size: int = Query(25, ge=1, le=100),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user)
 ):
     if not current_user:
         return []
-    
+
     query = db.query(Conversation).filter(Conversation.user_id == current_user.id)
-    
-    # Add search filter if provided
+
+    # Search both title and message content, while retaining ownership scope.
     if search:
         search_term = f"%{search}%"
-        query = query.filter(Conversation.title.ilike(search_term))
-    
-    convs = query.order_by(Conversation.updated_at.desc()).all()
+        query = query.outerjoin(Message, Message.conversation_id == Conversation.id).filter(
+            or_(Conversation.title.ilike(search_term), Message.content.ilike(search_term))
+        ).distinct()
 
-    return [
+    total = query.count()
+    convs = (
+        query.order_by(Conversation.is_pinned.desc(), Conversation.updated_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    return {"items": [
         {
             "id": c.id,
             "title": c.title,
@@ -220,7 +265,7 @@ def list_conversations(
             "updated_at": c.updated_at.isoformat()
         }
         for c in convs
-    ]
+    ], "page": page, "page_size": page_size, "total": total}
 
 @router.get("/conversations/{conv_id}")
 def get_conversation_details(
@@ -231,7 +276,7 @@ def get_conversation_details(
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     # Security: Verify conversation ownership
     if conv.user_id and current_user:
         if conv.user_id != current_user.id:
@@ -264,10 +309,17 @@ def get_conversation_details(
     }
 
 @router.post("/feedback")
-def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
-    msg = db.query(Message).filter(Message.id == payload.message_id).first()
+def submit_feedback(
+    payload: FeedbackRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user)
+):
+    msg = db.query(Message).join(Conversation).filter(Message.id == payload.message_id).first()
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
+    if msg.conversation.user_id:
+        if not current_user or msg.conversation.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access to this message is denied")
     msg.feedback = payload.feedback
     db.commit()
 
@@ -327,15 +379,15 @@ def rename_conversation(
         Conversation.id == conv_id,
         Conversation.user_id == current_user.id
     ).first()
-    
+
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     # Update title
     conv.title = payload.title
     conv.updated_at = datetime.now(UTC)
     db.commit()
-    
+
     return {
         "success": True,
         "id": conv.id,
@@ -355,14 +407,14 @@ def delete_conversation(
         Conversation.id == conv_id,
         Conversation.user_id == current_user.id
     ).first()
-    
+
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     # Delete conversation (cascade will handle messages)
     db.delete(conv)
     db.commit()
-    
+
     return {
         "success": True,
         "message": "Conversation deleted successfully"
@@ -380,15 +432,15 @@ def archive_conversation(
         Conversation.id == conv_id,
         Conversation.user_id == current_user.id
     ).first()
-    
+
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     # Toggle archive status
     conv.is_archived = not conv.is_archived
     conv.updated_at = datetime.now(UTC)
     db.commit()
-    
+
     return {
         "success": True,
         "id": conv.id,
@@ -408,15 +460,15 @@ def pin_conversation(
         Conversation.id == conv_id,
         Conversation.user_id == current_user.id
     ).first()
-    
+
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    
+
     # Toggle pin status
     conv.is_pinned = not conv.is_pinned
     conv.updated_at = datetime.now(UTC)
     db.commit()
-    
+
     return {
         "success": True,
         "id": conv.id,

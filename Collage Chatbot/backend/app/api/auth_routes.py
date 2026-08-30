@@ -1,4 +1,4 @@
-from datetime import timedelta, datetime, UTC
+﻿from datetime import timedelta, datetime, UTC
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
@@ -58,7 +58,8 @@ def register(data: UserRegister, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email is already registered")
 
-    role = db.query(Role).filter(Role.name == data.role.upper()).first()
+    # Public registration is always least-privilege; privileged roles are assigned administratively.
+    role = db.query(Role).filter(Role.name == "STUDENT").first()
     if not role:
         role = db.query(Role).filter(Role.name == "STUDENT").first()
 
@@ -310,7 +311,8 @@ def register_enhanced(data: EnhancedUserRegister, db: Session = Depends(get_db))
         raise HTTPException(status_code=400, detail="Email is already registered")
     
     # Get role
-    role = db.query(Role).filter(Role.name == data.role.upper()).first()
+    # Public registration is always least-privilege; privileged roles are assigned administratively.
+    role = db.query(Role).filter(Role.name == "STUDENT").first()
     if not role:
         role = db.query(Role).filter(Role.name == "STUDENT").first()
     
@@ -380,3 +382,5 @@ def _validate_email_format(email: str) -> bool:
     """Validate email format"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
+
+

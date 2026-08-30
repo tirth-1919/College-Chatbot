@@ -114,12 +114,84 @@ export const api = {
   },
 
   // Chat & Voice
-  async sendMessage(message: string, conversationId?: string, mode: 'TEXT' | 'VOICE' = 'TEXT'): Promise<ChatMessage> {
+  async createProject(data: { name: string; description?: string; instructions?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/projects`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) });
+    if (!res.ok) throw new Error('Unable to create project.');
+    return await res.json();
+  },
+  async getProjects(search?: string, page = 1, pageSize = 25): Promise<any> {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) }); if (search) params.set('search', search);
+    const res = await fetch(`${API_BASE}/workspace/projects?${params}`, { headers: getHeaders() }); if (!res.ok) throw new Error('Unable to load projects.'); return await res.json();
+  },
+  async updateProject(id: string, data: { name: string; description?: string; instructions?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/projects/${encodeURIComponent(id)}`, { method: 'PATCH', headers: getHeaders(), body: JSON.stringify(data) }); if (!res.ok) throw new Error('Unable to update project.'); return await res.json();
+  },
+  async deleteProject(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/projects/${encodeURIComponent(id)}`, { method: 'DELETE', headers: getHeaders() }); if (!res.ok) throw new Error('Unable to archive project.'); return await res.json();
+  },
+  async createShare(conversationId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/shares/conversations/${encodeURIComponent(conversationId)}`, { method: 'POST', headers: getHeaders() }); if (!res.ok) throw new Error('Unable to create share link.'); return await res.json();
+  },
+  async revokeShare(shareId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/shares/${encodeURIComponent(shareId)}`, { method: 'DELETE', headers: getHeaders() }); if (!res.ok) throw new Error('Unable to revoke share link.'); return await res.json();
+  },
+  async createCanvas(projectId: string, data: { title?: string; content?: string; content_type?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/projects/${encodeURIComponent(projectId)}/canvases`, { method: 'POST', headers: getHeaders(), body: JSON.stringify(data) }); if (!res.ok) throw new Error('Unable to create canvas.'); return await res.json();
+  },
+  async updateCanvas(id: string, data: { title: string; content: string; content_type?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/canvases/${encodeURIComponent(id)}`, { method: 'PUT', headers: getHeaders(), body: JSON.stringify(data) }); if (!res.ok) throw new Error('Unable to save canvas.'); return await res.json();
+  },
+  async canvasAction(id: string, action: string, selection: string, context = ''): Promise<any> {
+    const res = await fetch(`${API_BASE}/workspace/canvases/${encodeURIComponent(id)}/ai`, { method: 'POST', headers: getHeaders(), body: JSON.stringify({ action, selection, context }) }); if (!res.ok) throw new Error('Unable to complete Canvas action.'); return await res.json();
+  },
+
+  async uploadAttachment(file: File, conversationId?: string, projectId?: string): Promise<any> {
+    const form = new FormData();
+    form.append('file', file);
+    const params = new URLSearchParams(); if (conversationId) params.set('conversation_id', conversationId); if (projectId) params.set('project_id', projectId);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const headers: Record<string, string> = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(`${API_BASE}/library/upload${query}`, { method: 'POST', headers, body: form });
+    if (!res.ok) throw new Error('This file could not be uploaded. Please try another copy.');
+    return await res.json();
+  },
+
+  async getLibrary(search?: string, page = 1, pageSize = 25): Promise<any> {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (search) params.set('search', search);
+    const res = await fetch(`${API_BASE}/library?${params.toString()}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Unable to load your Library.');
+    return await res.json();
+  },
+
+  async getAttachment(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/library/${encodeURIComponent(id)}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Attachment not found.');
+    return await res.json();
+  },
+
+  async deleteAttachment(id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/library/${encodeURIComponent(id)}`, { method: 'DELETE', headers: getHeaders() });
+    if (!res.ok) throw new Error('Unable to delete this attachment.');
+    return await res.json();
+  },
+
+  async sendMessage(message: string, conversationId?: string, mode: 'TEXT' | 'VOICE' = 'TEXT', regenerate = false, options?: { think?: boolean; tool?: string; attachmentIds?: string[] }): Promise<ChatMessage> {
     try {
       const res = await fetch(`${API_BASE}/chat/send`, {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ message, conversation_id: conversationId, mode }),
+        body: JSON.stringify({
+          message,
+          conversation_id: conversationId,
+          mode,
+          regenerate,
+          think: options?.think || false,
+          tool: options?.tool || null,
+          request_id: crypto.randomUUID(),
+          attachment_ids: options?.attachmentIds || []
+        }),
       });
 
       if (!res.ok) {
@@ -236,11 +308,13 @@ export const api = {
     });
   },
 
-  async getConversations(search?: string): Promise<any[]> {
-    const params = search ? `?search=${encodeURIComponent(search)}` : '';
-    const res = await fetch(`${API_BASE}/chat/conversations${params}`, { headers: getHeaders() });
-    if (!res.ok) return [];
-    return await res.json();
+  async getConversations(search?: string, page = 1, pageSize = 25): Promise<{ items: any[]; page: number; page_size: number; total: number }> {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (search) params.set('search', search);
+    const res = await fetch(`${API_BASE}/chat/conversations?${params.toString()}`, { headers: getHeaders() });
+    if (!res.ok) return { items: [], page, page_size: pageSize, total: 0 };
+    const data = await res.json();
+    return Array.isArray(data) ? { items: data, page, page_size: pageSize, total: data.length } : data;
   },
 
   async getConversation(conversationId: string): Promise<any> {

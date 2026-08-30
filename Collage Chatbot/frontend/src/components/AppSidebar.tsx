@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
   Archive, BookOpen, ChevronLeft, ChevronRight, CircleHelp, Image,
   LayoutDashboard, MessageSquare, Plus, Search, Settings, Sparkles, X, ShieldAlert,
-  MoreVertical, Trash2, Edit2, LogOut, User as UserIcon, Pin
+  MoreVertical, Trash2, Edit2, LogOut, User as UserIcon, Pin, FolderKanban
 } from 'lucide-react';
 import { User } from '../types';
 import { api } from '../services/api';
@@ -35,6 +35,8 @@ const navItems = [
   { id: 'academic', label: 'Academic Data', icon: LayoutDashboard },
   { id: 'gallery', label: 'Official Gallery', icon: Image },
   { id: 'study', label: 'Study Center', icon: BookOpen },
+  { id: 'library', label: 'Library', icon: Archive },
+  { id: 'workspace', label: 'Projects', icon: FolderKanban }
 ];
 
 export const AppSidebar: React.FC<AppSidebarProps> = ({
@@ -52,11 +54,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const loadConversations = async () => {
     if (!currentUser) return;
-    
+
     setLoading(true);
     try {
-      const data = await api.getConversations(searchTerm);
-      setConversations(data);
+      const data = await api.getConversations(searchTerm, 1, 25);
+      setConversations(data.items);
     } catch (error) {
       console.error('Failed to load conversations:', error);
     } finally {
@@ -84,7 +86,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const handleDeleteConversation = async (convId: string) => {
     if (!confirm('Delete this conversation? This action cannot be undone.')) return;
-    
+
     try {
       await api.deleteConversation(convId);
       loadConversations();
@@ -123,7 +125,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-    
+
     if (diffDays === 0) return 'Today';
     if (diffDays === 1) return 'Yesterday';
     if (diffDays < 7) return 'Previous 7 days';
@@ -147,11 +149,11 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
           {!collapsed && <div><strong>AIT AI Assistant</strong><span>Ahmedabad Institute of Technology</span></div>}
           <button className="icon-button sidebar-close" aria-label="Close navigation" onClick={onCloseMobile}><X size={18} /></button>
         </div>
-        
+
         <button className="new-chat-button" onClick={onNewChat} title="Start a new chat">
           <Plus size={18} /> {!collapsed && <span>New chat</span>}
         </button>
-        
+
         {!collapsed && (
           <label className="sidebar-search">
             <Search size={16} />
@@ -163,7 +165,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             />
           </label>
         )}
-        
+
         <nav className="sidebar-nav" aria-label="Main navigation">
           {!collapsed && <p className="sidebar-label">Workspace</p>}
           {navItems.map(({ id, label, icon: Icon }) => (
@@ -240,7 +242,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </>
           )}
         </nav>
-        
+
         {currentUser && !collapsed && (
           <div className="sidebar-footer">
             <div className="user-profile">
@@ -274,7 +276,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
             </div>
           </div>
         )}
-        
+
         <div className="sidebar-footer">
           <button className="sidebar-link" title="Help & Support" onClick={() => { setActiveTab('chat'); onCloseMobile(); }}>
             <CircleHelp size={18} /><span>{!collapsed && 'Help & support'}</span>

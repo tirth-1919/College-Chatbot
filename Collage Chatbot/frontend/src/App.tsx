@@ -10,6 +10,9 @@ import { VoiceModal } from './components/VoiceModal';
 import { AuthModal } from './components/AuthModal';
 import { ProfileView } from './components/ProfileView';
 import { SettingsView } from './components/SettingsView';
+import { LibraryView } from './components/LibraryView';
+import { WorkspaceView } from './components/WorkspaceView';
+import { ShareView } from './components/ShareView';
 import { User } from './types';
 import { api, setAuthToken } from './services/api';
 
@@ -22,6 +25,7 @@ export const App: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [currentConversationId, setCurrentConversationId] = useState<string | undefined>(undefined);
+  const shareToken = window.location.pathname.startsWith('/share/') ? window.location.pathname.split('/')[2] : null;
 
   useEffect(() => {
     // Attempt auto-login with existing session or default to student
@@ -74,7 +78,8 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-ait-600 selection:text-white">
-      <AppSidebar
+      {shareToken ? <ShareView token={shareToken} /> : null}
+      {!shareToken && <AppSidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         collapsed={sidebarCollapsed}
@@ -85,8 +90,8 @@ export const App: React.FC = () => {
         currentUser={currentUser}
         onOpenConversation={handleOpenConversation}
         onLogout={handleLogout}
-      />
-      <div className="app-workspace">
+      />}
+      {!shareToken && <div className="app-workspace">
         <AppHeader
           activeTab={activeTab}
           currentUser={currentUser}
@@ -99,8 +104,8 @@ export const App: React.FC = () => {
         />
         <main className="app-main">
           {activeTab === 'chat' && (
-            <ChatView 
-              onOpenVoiceModal={() => setIsVoiceOpen(true)} 
+            <ChatView
+              onOpenVoiceModal={() => setIsVoiceOpen(true)}
               conversationId={currentConversationId}
               onLoadConversation={handleLoadConversation}
               onVoiceResponse={handleVoiceResponse}
@@ -108,29 +113,31 @@ export const App: React.FC = () => {
           )}
         {activeTab === 'academic' && <AcademicView />}
         {activeTab === 'gallery' && <VisualGalleryView />}
-        {activeTab === 'study' && <StudyCenterView />}
+          {activeTab === 'study' && <StudyCenterView />}
+          {activeTab === 'library' && <LibraryView onUseInChat={(id) => { setActiveTab('chat'); window.dispatchEvent(new CustomEvent('ait:use-attachment', { detail: id })); }} />}
+          {activeTab === 'workspace' && <WorkspaceView />}
         {activeTab === 'admin' && <AdminView />}
         {activeTab === 'profile' && <ProfileView currentUser={currentUser} onLogout={handleLogout} />}
         {activeTab === 'settings' && <SettingsView currentUser={currentUser} />}
       </main>
-      </div>
+      </div>}
 
       {/* Interactive Voice Conversation Modal */}
-      <VoiceModal
+      {!shareToken && <VoiceModal
         isOpen={isVoiceOpen}
         onClose={() => setIsVoiceOpen(false)}
         conversationId={currentConversationId}
         onResponseReceived={handleVoiceResponse}
-      />
+      />}
 
       {/* Authentication Modal */}
-      <AuthModal
+      {!shareToken && <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
         onLoginSuccess={(user) => {
           setCurrentUser(user);
         }}
-      />
+      />}
     </div>
   );
 };

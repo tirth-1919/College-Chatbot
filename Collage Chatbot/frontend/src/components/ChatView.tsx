@@ -4,7 +4,8 @@ import { api } from '../services/api';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import {
   Send, Sparkles, Volume2, Play, Pause, ThumbsUp, ThumbsDown,
-  Copy, Check, Bookmark, RefreshCw, AlertCircle, CheckCircle2, ShieldCheck, Mic
+  Copy, Check, Bookmark, RefreshCw, AlertCircle, CheckCircle2, ShieldCheck, Mic,
+  Plus, Brain, Globe2, GraduationCap, X, FileText, Share2, Link2
 } from 'lucide-react';
 
 interface ChatViewProps {
@@ -37,8 +38,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [lastUserPrompt, setLastUserPrompt] = useState<string>('');
   const [selectedImage, setSelectedImage] = useState<ImageCard | null>(null);
+  const [failedImageUrls, setFailedImageUrls] = useState<Set<string>>(new Set());
   const [loadingConversation, setLoadingConversation] = useState(false);
   const [voiceModeActive, setVoiceModeActive] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [thinkEnabled, setThinkEnabled] = useState(false);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachmentId, setAttachmentId] = useState<string | null>(null);
+  const [shareLink, setShareLink] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -46,6 +54,16 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    const useAttachment = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail;
+      setAttachmentId(id);
+      setInput(value => value || 'Explain this file.');
+    };
+    window.addEventListener('ait:use-attachment', useAttachment);
+    return () => window.removeEventListener('ait:use-attachment', useAttachment);
+  }, []);
 
   useEffect(() => {
     const resetChat = () => {
@@ -87,7 +105,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
         feedback: msg.feedback,
         input_mode: (msg.source_metadata && msg.source_metadata.input_mode) || 'text'
       })));
-      
+
       if (onLoadConversation) {
         onLoadConversation(convId);
       }
@@ -98,11 +116,23 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
     }
   };
 
-  const handleSend = async (textToSend?: string) => {
+  const handleSend = async (textToSend?: string, regenerate = false) => {
     const query = (textToSend || input).trim();
     if (!query || isLoading) return;
 
     setLastUserPrompt(query);
+
+    let uploadedAttachmentId = attachmentId;
+    try {
+      if (attachment && !uploadedAttachmentId) {
+        const uploaded = await api.uploadAttachment(attachment, conversationId);
+        uploadedAttachmentId = uploaded.id;
+        setAttachmentId(uploaded.id);
+      }
+    } catch (err: any) {
+      setMessages(prev => [...prev, { id: `attachment-error-${Date.now()}`, role: 'assistant', content: err.message || 'This file could not be uploaded. Please try another copy.', status: 'error', timestamp: new Date().toISOString() }]);
+      return;
+    }
 
     const userMsgId = `user-${Date.now()}`;
     const tempAsstId = `asst-temp-${Date.now()}`;
@@ -123,12 +153,22 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, userMsg, thinkingMsg]);
+    setMessages(prev => regenerate
+      ? [...prev.filter(msg => msg.content !== '' && msg.status !== 'thinking'), thinkingMsg]
+      : [...prev, userMsg, thinkingMsg]
+    );
     if (!textToSend) setInput('');
+    setAttachment(null);
+    setAttachmentId(null);
+    setToolsOpen(false);
     setIsLoading(true);
 
     try {
-      const res = await api.sendMessage(query, conversationId);
+      const res = await api.sendMessage(query, conversationId, 'TEXT', regenerate, {
+        think: thinkEnabled,
+        tool: thinkEnabled ? 'THINK' : undefined,
+        attachmentIds: uploadedAttachmentId ? [uploadedAttachmentId] : [],
+      });
       if (res.conversation_id) {
         setConversationId(res.conversation_id);
       }
@@ -151,7 +191,7 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
       );
     } catch (err: any) {
       console.error('Chat error:', err);
-      const friendlyErr = err.message || "Sorry, I couldn't get an answer right now. Please try again.";
+      const friendlyErr = "Something went wrong while preparing your answer. Please try again.";
       setMessages(prev =>
         prev.map(msg =>
           msg.id === tempAsstId
@@ -172,9 +212,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
 
   const handleRegenerate = (query?: string) => {
     const promptToRetry = query || lastUserPrompt;
-    if (promptToRetry) {
-      handleSend(promptToRetry);
-    }
+    if (!promptToRetry || isLoading) return;
+    // Regeneration reuses the prompt without adding a second user message.
+    handleSend(promptToRetry, true);
   };
 
   const handlePlayAudio = (msg: ChatMessage) => {
@@ -231,6 +271,18 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const handleShare = async () => {
+    if (!conversationId) return;
+    try {
+      const result = await api.createShare(conversationId);
+      const link = `${window.location.origin}/share/${result.token}`;
+      setShareLink(link);
+      await navigator.clipboard.writeText(link).catch(() => undefined);
+    } catch (error) {
+      console.error('Failed to create share link:', error);
+    }
   };
 
   const handleToggleSave = (id: string) => {
@@ -405,9 +457,9 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
               {msg.role === 'assistant' && msg.status === 'complete' && msg.images && msg.images.length > 0 && (
                 <div className="mt-4 pt-3.5 border-t border-slate-800/80">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {msg.images.map((img, idx) => (
+                    {msg.images.filter(img => img.image_url && !failedImageUrls.has(img.image_url)).map((img, idx) => (
                       <div
-                        key={idx}
+                        key={`${img.image_url}-${idx}`}
                         onClick={() => setSelectedImage(img)}
                         className="rounded-xl overflow-hidden bg-slate-950 border border-slate-800 group cursor-pointer hover:border-ait-500/50 transition-all"
                       >
@@ -416,8 +468,13 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
                             src={img.image_url}
                             alt={img.alt_text || 'AIT Official Image'}
                             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-                            onError={(e) => {
-                              (e.target as HTMLElement).style.display = 'none';
+                            onError={() => {
+                              setFailedImageUrls(prev => {
+                                const next = new Set(prev);
+                                next.add(img.image_url);
+                                return next;
+                              });
+                              if (selectedImage?.image_url === img.image_url) setSelectedImage(null);
                             }}
                           />
                           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-80" />
@@ -468,6 +525,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
                     >
                       <RefreshCw className="w-3.5 h-3.5" />
                     </button>
+
+                    <button onClick={handleShare} disabled={!conversationId} title="Share conversation" aria-label="Share conversation" className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 disabled:opacity-40 transition-all"><Share2 className="w-3.5 h-3.5" /></button>
 
                     <button
                       onClick={() => handleToggleSave(msg.id)}
@@ -534,12 +593,48 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
           }}
           className="flex items-center space-x-2 bg-slate-900/90 p-2 rounded-2xl border border-slate-800 shadow-xl"
         >
+          {attachment && (
+            <div className="absolute -translate-y-14 left-2 flex items-center gap-2 rounded-lg border-slate-700 bg-slate-900 px-3 py-2 text-xs text-slate-200 shadow-lg">
+              <FileText className="h-4 w-4 text-ait-gold" />
+              <span className="max-w-[180px] truncate">{attachment.name}</span>
+              <button type="button" onClick={() => { setAttachment(null); setAttachmentId(null); }} aria-label="Remove attachment" title="Remove attachment" className="text-slate-400 hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,image/png,image/jpeg,image/webp"
+            onChange={(event) => { setAttachment(event.target.files?.[0] || null); setAttachmentId(null); }}
+          />
+          <div className="relative flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setToolsOpen((open) => !open)}
+              className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition-all"
+              title="Open tools and attachments"
+              aria-label="Open tools and attachments"
+              aria-expanded={toolsOpen}
+            >
+              <Plus className="w-5 h-5" />
+            </button>
+            {toolsOpen && (
+              <div className="absolute bottom-14 left-0 z-20 w-56 rounded-xl border-slate-700 bg-slate-900 p-2 shadow-2xl">
+                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"><FileText className="h-4 w-4" />Upload file</button>
+                <button type="button" onClick={() => { setInput((value) => value ? `${value} Search the web for this: ` : 'Search the web for: '); setToolsOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"><Globe2 className="h-4 w-4" />Search the web</button>
+                <button type="button" onClick={() => { setInput((value) => value ? `${value} Study this: ` : 'Study this: '); setToolsOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-800"><GraduationCap className="h-4 w-4" />Study mode</button>
+                <button type="button" onClick={() => { setThinkEnabled((enabled) => !enabled); setToolsOpen(false); }} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-800 ${thinkEnabled ? 'text-ait-gold' : 'text-slate-200'}`}><Brain className="h-4 w-4" />{thinkEnabled ? 'Think enabled' : 'Think more'}</button>
+              </div>
+            )}
+          </div>
           <button
             type="button"
             onClick={onOpenVoiceModal}
             className={`p-3 rounded-xl transition-all hover:scale-105 flex-shrink-0 ${
-              voiceModeActive 
-                ? 'bg-ait-600 text-white animate-pulse' 
+              voiceModeActive
+                ? 'bg-ait-600 text-white animate-pulse'
                 : 'bg-slate-800 hover:bg-slate-700 text-blue-400'
             }`}
             title="Start Voice Mode"
@@ -551,6 +646,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onPaste={(e) => {
+              const pastedImage = Array.from(e.clipboardData.files).find((file) => file.type.startsWith('image/'));
+              if (pastedImage) { setAttachment(pastedImage); setAttachmentId(null); }
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              setAttachment(e.dataTransfer.files?.[0] || null); setAttachmentId(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -579,6 +683,8 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
         </p>
       </div>
 
+      {shareLink && <div role="status" className="fixed bottom-20 left-1/2 z-40 flex -translate-x-1/2 items-center gap-2 rounded-lg border-emerald-500/30 bg-slate-900 px-3 py-2 text-xs text-emerald-200 shadow-xl"><Link2 className="h-4 w-4" /><span>Share link copied</span><button onClick={() => setShareLink(null)} aria-label="Dismiss share notification"><X className="h-4 w-4" /></button></div>}
+
       {/* Image Lightbox Modal */}
       {selectedImage && (
         <div
@@ -593,6 +699,10 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversati
               src={selectedImage.image_url}
               alt={selectedImage.alt_text || 'AIT Image'}
               className="w-full max-h-[70vh] object-contain bg-slate-950"
+              onError={() => {
+                setFailedImageUrls(prev => new Set(prev).add(selectedImage.image_url));
+                setSelectedImage(null);
+              }}
             />
             <div className="p-4 bg-slate-900 flex items-center justify-between border-t border-slate-800">
               <div>

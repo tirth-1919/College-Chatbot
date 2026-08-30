@@ -1,18 +1,23 @@
-import os
+﻿import os
 import secrets
 from pathlib import Path
 from fastapi import FastAPI, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
+from sqlalchemy import inspect, text
 from starlette.middleware.base import BaseHTTPMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from backend.app.security.rate_limiter import rate_limiter, handle_rate_limit_exceeded
 from backend.app.config import settings
 from backend.app.database import engine, Base
 from backend.app.api.auth_routes import router as auth_router
 from backend.app.api.chat_routes import router as chat_router
+from backend.app.api.library_routes import router as library_router
+from backend.app.api.workspace_routes import router as workspace_router
+from backend.app.api.share_routes import router as share_router
 from backend.app.api.academic_routes import router as academic_router
 from backend.app.api.visual_routes import router as visual_router
 from backend.app.api.knowledge_routes import router as knowledge_router
@@ -23,15 +28,26 @@ from backend.app.api.security_routes import router as security_router
 from backend.app.api.enhanced_auth_routes import router as enhanced_auth_router
 from backend.app.api.enhanced_services_routes import router as enhanced_services_router
 from backend.app.api.admin_enhanced_routes import router as admin_enhanced_router
+from backend.app.api.phase3_routes import router as phase3_router
 from backend.app.security.csrf import CSRFMiddleware
+from backend.app.monitoring.observability import ObservabilityMiddleware, observability
 from database.seed.seed_data import seed_database
 
 # Create database tables and auto-seed if needed
 Base.metadata.create_all(bind=engine)
+# Additive compatibility for existing Phase 1 SQLite databases; production uses Alembic 006.
+def ensure_phase2_columns():
+    inspector = inspect(engine)
+    with engine.begin() as connection:
+        if "conversations" in inspector.get_table_names() and "project_id" not in {column["name"] for column in inspector.get_columns("conversations")}:
+            connection.execute(text("ALTER TABLE conversations ADD COLUMN project_id VARCHAR"))
+        if "attachments" in inspector.get_table_names() and "project_id" not in {column["name"] for column in inspector.get_columns("attachments")}:
+            connection.execute(text("ALTER TABLE attachments ADD COLUMN project_id VARCHAR"))
+ensure_phase2_columns()
 seed_database()
 
-# Rate Limiter Setup
-limiter = Limiter(key_func=get_remote_address)
+# Rate Limiter Setup - Use comprehensive Phase 3 rate limiter
+limiter = rate_limiter.limiter
 app = FastAPI(
     title=settings.APP_NAME,
     description="Production-Grade AI Assistant for Ahmedabad Institute of Technology (AIT) — 3-Tier Source Authority, Visual Retrieval, Voice AI, Admin Truth Layer & RAG",
@@ -40,7 +56,7 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(RateLimitExceeded, handle_rate_limit_exceeded)
 
 # Security Headers Middleware
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -60,13 +76,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Add CSRF protection middleware
-csrf_secret = os.getenv("CSRF_SECRET_KEY", secrets.token_urlsafe(32))
+csrf_secret = settings.CSRF_SECRET_KEY or secrets.token_urlsafe(32)
 app.add_middleware(CSRFMiddleware, secret_key=csrf_secret)
+
+# Add observability middleware
+app.add_middleware(ObservabilityMiddleware)
+app.state.observability = observability
 
 # CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Allow all for local dev & production preview
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -76,6 +96,9 @@ app.add_middleware(
 api_prefix = settings.API_V1_STR
 app.include_router(auth_router, prefix=api_prefix)
 app.include_router(chat_router, prefix=api_prefix)
+app.include_router(library_router, prefix=api_prefix)
+app.include_router(workspace_router, prefix=api_prefix)
+app.include_router(share_router, prefix=api_prefix)
 app.include_router(academic_router, prefix=api_prefix)
 app.include_router(visual_router, prefix=api_prefix)
 app.include_router(knowledge_router, prefix=api_prefix)
@@ -85,10 +108,14 @@ app.include_router(security_router, prefix=api_prefix)
 app.include_router(enhanced_auth_router, prefix=api_prefix)
 app.include_router(enhanced_services_router, prefix=api_prefix)
 app.include_router(admin_enhanced_router, prefix=api_prefix)
+app.include_router(phase3_router, prefix=api_prefix)
 
 # Direct /api prefix aliases
 app.include_router(auth_router, prefix="/api")
 app.include_router(chat_router, prefix="/api")
+app.include_router(library_router, prefix="/api")
+app.include_router(workspace_router, prefix="/api")
+app.include_router(share_router, prefix="/api")
 app.include_router(academic_router, prefix="/api")
 app.include_router(visual_router, prefix="/api")
 app.include_router(knowledge_router, prefix="/api")
@@ -98,6 +125,7 @@ app.include_router(security_router, prefix="/api")
 app.include_router(enhanced_auth_router, prefix="/api")
 app.include_router(enhanced_services_router, prefix="/api")
 app.include_router(admin_enhanced_router, prefix="/api")
+app.include_router(phase3_router, prefix="/api")
 
 # Prometheus & System Metrics Endpoints
 app.include_router(metrics_router)
@@ -200,5 +228,13 @@ async def spa_fallback(full_path: str, request: Request):
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error", "message": str(exc)}
+        content={"detail": "Internal server error", "request_id": request.headers.get("X-Request-ID", "unknown")}
     )
+
+
+# Extended admin knowledge center. This is an additional route group in the
+# existing service, not a second application or database.
+from backend.app.api.admin_knowledge_routes import router as admin_knowledge_center_router
+app.include_router(admin_knowledge_center_router, prefix=api_prefix)
+
+

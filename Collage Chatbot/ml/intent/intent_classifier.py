@@ -95,6 +95,12 @@ class IntentClassifier:
             r"\b(quiz|flashcard|flashcards|study\s+plan|explain\s+topic|mock\s+test|viva\s+practice|prepare\s+for\s+viva|viva\s+prep|viva\s+preparation|how\s+can\s+i\s+prepare\s+for\s+viva|how\s+to\s+prepare\s+for\s+viva|viva\s+questions)\b",
             r"\b(help\s+me\s+study|make\s+a\s+study\s+plan|create\s+a\s+study\s+plan|study\s+tips)\b"
         ],
+        "COURSE_SUBJECTS": [
+            r"\b(which|what)\s+(subject|subjects)\s+(are\s+)?(covered|included|taught)\b",
+            r"\b(subjects?\s+(in|of|for)\s+(bca|btech|mca|mba))\b",
+            r"\b(in\s+(bca|btech|mca|mba)\s+which\s+subjects?\s+(cover|covered|included))\b",
+            r"\b(bca|btech|mca|mba)\s+subjects?\b"
+        ],
         "SYLLABUS_QUERY": [
             r"\b(syllabus|curriculum|course\s+outline|subject\s+outline|units|course\s+content)\b",
             r"\b(dbms|bca|btech|python|java|os)\s+syllabus\b",
@@ -117,7 +123,8 @@ class IntentClassifier:
             r"(પ્રવેશન|દાખલો|એનરોલ|રજિસ્ટ્રેશન|પ્રવેશન\s+ફોર્મ|દાખલ\s+ફોર્મ|एडमिशन|दाखिल)"
         ],
         "COURSES": [
-            r"\b(courses?|programs?|degrees?|bca|btech|mca|mba|offered|available|what\s+courses|list\s+courses)\b",
+            r"\b(courses?|programs?|degrees?|offered|available|what\s+courses|list\s+courses)\b",
+            r"\b(bca|btech|mca|mba)\s+(course|program|degree)\b",
             r"\b(what\s+programs|what\s+degrees|tell\s+me\s+about\s+courses|course\s+list)\b",
             r"(કોર્સેઝ|પ્રોગ્રામ|ડિગ્રી|અભ્યાસ|ઉપલબધિ|કોર્સેઝ)"
         ],
@@ -174,7 +181,7 @@ class IntentClassifier:
             r"(સ્કલરિપ|શિક્ષય|આર્મિક|ફી\s+વેર|વિદાન|સ્કલરિપ|સ્કલરિપ)"
         ],
         "DOCUMENTS": [
-            r"\b(document|documents|required|need|what\s+documents|admission\s+documents|join\s+documents)\b",
+            r"\b(document|documents|required|what\s+documents|admission\s+documents|join\s+documents)\b",
             r"\b(documents?\s+for\s+(?:admission|joining|registration|apply))\b",
             r"\b((?:bca|btech|mca|mba)\s+documents?)\b",
             r"(દસ્તામ|દસ્તામો|જરૂરી\s+લાવા|દસ્તામ\s+માંગલિ)"

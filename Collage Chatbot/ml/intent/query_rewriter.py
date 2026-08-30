@@ -75,6 +75,10 @@ class QueryRewriter:
             "short": ["teacher", "professor", "faculty", "teaches", "instructor"],
             "template": "Who teaches {subject} at Ahmedabad Institute of Technology?"
         },
+        "COURSE_SUBJECTS": {
+            "short": ["subject", "subjects", "covered", "cover"],
+            "template": "What subjects are covered in the {course} program at Ahmedabad Institute of Technology?"
+        },
         "SYLLABUS_QUERY": {
             "short": ["syllabus", "curriculum", "course content", "topics"],
             "template": "What is the syllabus for {subject} at Ahmedabad Institute of Technology?"
@@ -123,15 +127,15 @@ class QueryRewriter:
         """Determine if the query is too short for effective retrieval"""
         words = text.strip().split()
         word_count = len(words)
-        
+
         # Very short queries (1-2 words) often need expansion
         if word_count <= 2:
             return True
-        
+
         # Single word regardless of length
         if word_count == 1:
             return True
-        
+
         # Query without key entities
         # This is handled by entity extraction, but we can add heuristics
         return False
@@ -143,7 +147,7 @@ class QueryRewriter:
         """
         lowered = text.lower()
         intents = [primary_intent]
-        
+
         # Check for common multi-intent patterns
         multi_intent_patterns = {
             ("FEE_QUERY", "ELIGIBILITY"): [r"fee.*eligibility", r"eligibility.*fee", r"cost.*eligible", r"eligible.*cost"],
@@ -154,7 +158,7 @@ class QueryRewriter:
             ("ADMISSION", "FEE_QUERY"): [r"admission.*fee", r"fee.*admission"],
             ("SYLLABUS_QUERY", "FACULTY_SUBJECT_QUERY"): [r"syllabus.*teaches", r"teaches.*syllabus"]
         }
-        
+
         for (intent1, intent2), patterns in multi_intent_patterns.items():
             if primary_intent == intent1:
                 for pattern in patterns:
@@ -168,7 +172,7 @@ class QueryRewriter:
                         if intent1 not in intents:
                             intents.append(intent1)
                         break
-        
+
         return intents
 
     def rewrite_query(
@@ -180,7 +184,7 @@ class QueryRewriter:
     ) -> Dict[str, Any]:
         """
         Main rewrite function that generates an optimized query for retrieval.
-        
+
         Returns:
             {
                 "original_query": str,
@@ -194,37 +198,39 @@ class QueryRewriter:
         """
         normalized = self.correct_spelling(original_query.strip())
         lowered = normalized.lower()
-        
+
         # Merge context entities with current entities
         merged_entities = dict(entities)
         if context_entities:
             for k, v in context_entities.items():
                 if k not in merged_entities:
                     merged_entities[k] = v
-        
+
         # Detect multi-intents
         multi_intents = self.detect_multi_intent(normalized, intent, merged_entities)
-        
+
         # Determine if rewrite is needed
         rewrite_needed = False
         rewrite_reason = ""
         rewritten_query = normalized
-        
-        # Check if it's a short query that needs expansion
+
+        # Course subject requests should be expanded even when colloquial wording
+        # makes them longer than the normal short-query threshold.
         is_short = self.detect_is_short_query(normalized, intent)
-        
-        if is_short and intent in self.QUERY_TEMPLATES:
+        is_course_subject_request = intent == "COURSE_SUBJECTS"
+
+        if (is_short or is_course_subject_request) and intent in self.QUERY_TEMPLATES:
             template_info = self.QUERY_TEMPLATES[intent]
-            
+
             # Check if the query matches short form patterns
             matches_short = any(short in lowered for short in template_info["short"])
-            
+
             if matches_short:
                 # Use template to expand
                 course = merged_entities.get("course", "BCA")
                 subject = merged_entities.get("subject", "")
                 facility = merged_entities.get("facility", "")
-                
+
                 # Select appropriate entity for template
                 if intent == "FACULTY_SUBJECT_QUERY" and subject:
                     rewritten_query = template_info["template"].format(subject=subject)
@@ -232,10 +238,10 @@ class QueryRewriter:
                     rewritten_query = template_info["template"].format(facility=facility)
                 else:
                     rewritten_query = template_info["template"].format(course=course)
-                
+
                 rewrite_needed = True
                 rewrite_reason = "Short query expansion"
-        
+
         # Handle pronoun resolution in follow-ups
         elif any(pronoun in lowered for pronoun in ["it", "its", "this", "that"]):
             if "course" in merged_entities:
@@ -259,7 +265,7 @@ class QueryRewriter:
                 if rewritten_query != normalized:
                     rewrite_needed = True
                     rewrite_reason = "Pronoun resolution"
-        
+
         # Handle "what about" follow-ups
         elif "what about" in lowered or "how about" in lowered:
             if "course" in merged_entities:
@@ -273,14 +279,14 @@ class QueryRewriter:
                     rewritten_query = f"What about {merged_entities['subject']}?"
                     rewrite_needed = True
                     rewrite_reason = "Entity clarification in follow-up"
-        
+
         # Calculate confidence
         confidence = 0.95 if not rewrite_needed else 0.85
-        
+
         # Lower confidence for complex rewrites
         if rewrite_reason == "Pronoun resolution":
             confidence = 0.90
-        
+
         return {
             "original_query": original_query,
             "normalized_query": normalized,
@@ -300,7 +306,7 @@ class QueryRewriter:
     ) -> Dict[str, Any]:
         """
         Detect if a query is ambiguous and requires clarification.
-        
+
         Returns:
             {
                 "is_ambiguous": bool,
@@ -310,7 +316,7 @@ class QueryRewriter:
             }
         """
         lowered = query.lower()
-        
+
         # Check for ambiguity patterns
         ambiguous_patterns = {
             "FEE_QUERY": {
@@ -330,10 +336,10 @@ class QueryRewriter:
                 "clarification": "Which subject's syllabus would you like to know about?"
             }
         }
-        
+
         if intent in ambiguous_patterns:
             pattern_info = ambiguous_patterns[intent]
-            
+
             # Check if entity is missing
             if intent == "FEE_QUERY" and "course" not in entities:
                 if re.search(pattern_info["no_course"], lowered):
@@ -343,7 +349,7 @@ class QueryRewriter:
                         "clarification_question": pattern_info["clarification"],
                         "confidence": 0.60
                     }
-            
+
             elif intent == "EXAM_QUERY" and "subject" not in entities:
                 if re.search(pattern_info["no_subject"], lowered):
                     return {
@@ -352,7 +358,7 @@ class QueryRewriter:
                         "clarification_question": pattern_info["clarification"],
                         "confidence": 0.60
                     }
-            
+
             elif intent == "FACULTY_SUBJECT_QUERY" and "subject" not in entities:
                 if re.search(pattern_info["no_subject"], lowered):
                     return {
@@ -361,7 +367,7 @@ class QueryRewriter:
                         "clarification_question": pattern_info["clarification"],
                         "confidence": 0.60
                     }
-            
+
             elif intent == "SYLLABUS_QUERY" and "subject" not in entities:
                 if re.search(pattern_info["no_subject"], lowered):
                     return {
@@ -370,7 +376,7 @@ class QueryRewriter:
                         "clarification_question": pattern_info["clarification"],
                         "confidence": 0.60
                     }
-        
+
         # Not ambiguous
         return {
             "is_ambiguous": False,

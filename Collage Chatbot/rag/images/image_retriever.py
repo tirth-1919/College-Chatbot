@@ -1,11 +1,17 @@
 import re
 from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
 from sqlalchemy.orm import Session
 from backend.app.models.entities import Facility, FacilityImage, Event, EventImage
 
 class OfficialImageRetriever:
     """Retrieves verified real official AIT photographs with strict provenance guarantee"""
-    
+
+    @staticmethod
+    def _is_approved_url(url: str) -> bool:
+        parsed = urlparse(url or "")
+        return parsed.scheme == "https" and parsed.netloc.lower().endswith("aitindia.in") and bool(parsed.path)
+
     @staticmethod
     def search_images(
         db: Session,
@@ -34,7 +40,7 @@ class OfficialImageRetriever:
 
             if any(k in lowered for k in keywords):
                 for img in fac.images:
-                    if img.ai_visible and img.approval_status == "APPROVED":
+                    if img.ai_visible and img.approval_status == "APPROVED" and OfficialImageRetriever._is_approved_url(img.image_url) and OfficialImageRetriever._is_approved_url(img.source_url):
                         results.append({
                             "image_url": img.image_url,
                             "source_url": img.source_url,
@@ -50,7 +56,7 @@ class OfficialImageRetriever:
         events_query = db.query(Event)
         if year:
             events_query = events_query.filter(Event.calendar_year == year)
-        
+
         events = events_query.all()
         for ev in events:
             ev_name_low = ev.name.lower()
@@ -66,7 +72,7 @@ class OfficialImageRetriever:
 
             if matches_event:
                 for img in ev.images:
-                    if img.ai_visible and img.approval_status == "APPROVED":
+                    if img.ai_visible and img.approval_status == "APPROVED" and OfficialImageRetriever._is_approved_url(img.image_url) and OfficialImageRetriever._is_approved_url(img.source_url):
                         results.append({
                             "image_url": img.image_url,
                             "source_url": img.source_url,

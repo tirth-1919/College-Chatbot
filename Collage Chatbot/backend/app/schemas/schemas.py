@@ -197,11 +197,16 @@ class ResolveConflictRequest(BaseModel):
 # ----------------- Chat & Voice Schemas -----------------
 class ChatRequest(BaseModel):
     conversation_id: Optional[str] = None
+    project_id: Optional[str] = None
     message: str
     language: Optional[str] = None # Auto-detect if None
     mode: str = "TEXT" # TEXT, VOICE
     stream: bool = False
-
+    regenerate: bool = False
+    think: bool = False
+    tool: Optional[str] = Field(default=None, max_length=40)
+    request_id: Optional[str] = Field(default=None, max_length=100)
+    attachment_ids: List[str] = Field(default_factory=list, max_length=5)
 class ChatResponse(BaseModel):
     conversation_id: str
     message_id: str

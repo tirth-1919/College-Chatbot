@@ -64,6 +64,7 @@ class User(Base):
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     support_tickets = relationship("SupportTicket", back_populates="user")
     password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
+    projects = relationship("Project", back_populates="owner")
 
 # ----------------- 2. Academic Master Data -----------------
 
@@ -420,10 +421,60 @@ class KnowledgeConflict(Base):
 
 # ----------------- 5. Conversations, Voice & AI Audits -----------------
 
+class Project(Base):
+    __tablename__ = "projects"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String(160), nullable=False)
+    description = Column(String(1000), nullable=True)
+    instructions = Column(Text, nullable=True)
+    is_archived = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    owner = relationship("User")
+    conversations = relationship("Conversation", back_populates="project")
+    attachments = relationship("Attachment", back_populates="project")
+    canvases = relationship("Canvas", back_populates="project", cascade="all, delete-orphan")
+
+class ConversationShare(Base):
+    __tablename__ = "conversation_shares"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False, index=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=False)
+    share_token_hash = Column(String(64), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    expires_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    conversation = relationship("Conversation")
+
+class Canvas(Base):
+    __tablename__ = "canvases"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=False, index=True)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(255), nullable=False, default="Untitled Canvas")
+    content = Column(Text, nullable=False, default="")
+    content_type = Column(String(30), nullable=False, default="markdown")
+    revision = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    project = relationship("Project", back_populates="canvases")
+    versions = relationship("CanvasVersion", back_populates="canvas", cascade="all, delete-orphan", order_by="CanvasVersion.version.desc()")
+
+class CanvasVersion(Base):
+    __tablename__ = "canvas_versions"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    canvas_id = Column(String, ForeignKey("canvases.id"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    canvas = relationship("Canvas", back_populates="versions")
+
 class Conversation(Base):
     __tablename__ = "conversations"
     id = Column(String, primary_key=True, default=generate_uuid)
     user_id = Column(String, ForeignKey("users.id"), nullable=True) # Optional for public guest chat
+    project_id = Column(String, ForeignKey("projects.id"), nullable=True, index=True)
     title = Column(String(255), default="New Conversation")
     mode = Column(String(30), default="TEXT") # TEXT, VOICE
     is_pinned = Column(Boolean, default=False)
@@ -432,7 +483,32 @@ class Conversation(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     user = relationship("User", back_populates="conversations")
+    project = relationship("Project", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan", order_by="Message.created_at")
+    attachments = relationship("Attachment", back_populates="conversation", cascade="all, delete-orphan")
+
+class Attachment(Base):
+    __tablename__ = "attachments"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True, index=True)
+    project_id = Column(String, ForeignKey("projects.id"), nullable=True, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(120), nullable=False)
+    size = Column(Integer, nullable=False)
+    storage_path = Column(String(500), nullable=False)
+    source_hash = Column(String(64), nullable=False, index=True)
+    processing_status = Column(String(20), nullable=False, default="PROCESSING")
+    extraction_status = Column(String(20), nullable=False, default="PENDING")
+    index_status = Column(String(20), nullable=False, default="NOT_INDEXED")
+    extracted_text = Column(Text, nullable=True)
+    metadata_json = Column(JSON, default=dict)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    deleted_at = Column(DateTime, nullable=True)
+
+    conversation = relationship("Conversation", back_populates="attachments")
+    project = relationship("Project", back_populates="attachments")
+    user = relationship("User")
 
 class Message(Base):
     __tablename__ = "messages"
@@ -599,3 +675,269 @@ class WebsiteSyncReport(Base):
     error_details = Column(JSON, default=list)
     sync_summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+# ----------------- 8. Background Jobs & Deep Research -----------------
+
+class BackgroundJob(Base):
+    """Background job system for long-running tasks"""
+    __tablename__ = "background_jobs"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    job_type = Column(String(50), nullable=False)  # DEEP_RESEARCH, DATA_ANALYSIS, FILE_PROCESSING, PDF_INDEXING
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    owner_role = Column(String(50), default="STUDENT")  # STUDENT, FACULTY, ADMIN
+    
+    # Job parameters and configuration
+    parameters = Column(JSON, default=dict)  # Job-specific parameters
+    priority = Column(Integer, default=5)  # 1-10, higher = more important
+    
+    # Job status tracking
+    status = Column(String(30), default="QUEUED")  # QUEUED, RUNNING, COMPLETED, FAILED, CANCELLED
+    progress = Column(Integer, default=0)  # 0-100 percentage
+    current_step = Column(String(255), nullable=True)  # Human-readable progress step
+    
+    # Timing information
+    queued_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    estimated_duration_seconds = Column(Integer, nullable=True)
+    
+    # Results and error handling
+    result = Column(JSON, nullable=True)  # Job output data
+    error_message = Column(Text, nullable=True)
+    error_category = Column(String(50), nullable=True)  # TIMEOUT, RESOURCE_LIMIT, VALIDATION_ERROR, SYSTEM_ERROR
+    
+    # Cancellation support
+    cancellation_requested = Column(Boolean, default=False)
+    cancellation_requested_at = Column(DateTime, nullable=True)
+    
+    # Resource tracking
+    memory_used_mb = Column(Float, nullable=True)
+    cpu_time_seconds = Column(Float, nullable=True)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    
+    owner = relationship("User")
+
+
+class UserMemory(Base):
+    """Persistent user memory for preferences and recurring patterns"""
+    __tablename__ = "user_memories"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True, unique=True)
+    
+    # Memory content
+    preferred_language = Column(String(10), default="en")  # en, hi, gu, hinglish
+    preferred_answer_style = Column(String(50), default="balanced")  # concise, balanced, detailed
+    study_preferences = Column(JSON, default=dict)  # course, semester, study habits
+    recurring_patterns = Column(JSON, default=list)  # Common queries, topics of interest
+    
+    # Memory controls
+    memory_enabled = Column(Boolean, default=True)
+    last_accessed_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    # Privacy and security
+    access_count = Column(Integer, default=0)
+    last_updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    user = relationship("User")
+
+
+class DeepResearchSource(Base):
+    """Sources used in deep research with quality rankings"""
+    __tablename__ = "deep_research_sources"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    job_id = Column(String, ForeignKey("background_jobs.id"), nullable=False, index=True)
+    
+    # Source information
+    source_url = Column(String(500), nullable=False)
+    source_type = Column(String(50), nullable=False)  # OFFICIAL, ACADEMIC, GOVERNMENT, NEWS, BLOG, OTHER
+    title = Column(String(255), nullable=True)
+    
+    # Quality assessment
+    authority_score = Column(Float, default=0.5)  # 0.0-1.0
+    freshness_score = Column(Float, default=0.5)  # 0.0-1.0
+    relevance_score = Column(Float, default=0.5)  # 0.0-1.0
+    overall_quality = Column(Float, default=0.5)  # Weighted combination
+    
+    # Content analysis
+    content_hash = Column(String(64), nullable=True)
+    extracted_facts = Column(JSON, default=list)  # Key facts extracted
+    citation_text = Column(Text, nullable=True)
+    
+    # Deduplication
+    is_duplicate = Column(Boolean, default=False)
+    duplicate_of_id = Column(String, nullable=True)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    job = relationship("BackgroundJob")
+
+
+class DeepResearchReport(Base):
+    """Final deep research report with citations"""
+    __tablename__ = "deep_research_reports"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    job_id = Column(String, ForeignKey("background_jobs.id"), nullable=False, unique=True, index=True)
+    
+    # Report structure
+    research_question = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    detailed_report = Column(Text, nullable=False)
+    key_findings = Column(JSON, default=list)  # Bullet points of main findings
+    
+    # Source analysis
+    total_sources = Column(Integer, default=0)
+    authoritative_sources = Column(Integer, default=0)
+    source_conflicts = Column(JSON, default=list)  # Conflicting information found
+    
+    # Citation validation
+    citations_validated = Column(Boolean, default=False)
+    citation_count = Column(Integer, default=0)
+    
+    # Limitations and confidence
+    limitations = Column(Text, nullable=True)
+    confidence_level = Column(String(30), default="MEDIUM")  # HIGH, MEDIUM, LOW
+    uncertainty_explained = Column(Boolean, default=False)
+    
+    # Follow-up actions
+    suggested_followups = Column(JSON, default=list)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    job = relationship("BackgroundJob")
+
+
+class DataAnalysisJob(Base):
+    """Data analysis job tracking"""
+    __tablename__ = "data_analysis_jobs"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    job_id = Column(String, ForeignKey("background_jobs.id"), nullable=False, unique=True, index=True)
+    
+    # Dataset information
+    file_id = Column(String, ForeignKey("attachments.id"), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    file_type = Column(String(50), nullable=False)  # CSV, XLSX
+    
+    # Analysis results
+    row_count = Column(Integer, nullable=True)
+    column_count = Column(Integer, nullable=True)
+    schema_detected = Column(JSON, nullable=True)  # Column names, types
+    statistics = Column(JSON, nullable=True)  # Mean, median, std, etc.
+    
+    # Analysis operations performed
+    operations_performed = Column(JSON, default=list)  # filtering, sorting, aggregation, etc.
+    
+    # Visualization results
+    charts_generated = Column(JSON, default=list)  # Chart metadata
+    chart_urls = Column(JSON, default=list)  # URLs to generated chart images
+    
+    # Data quality assessment
+    missing_values = Column(JSON, nullable=True)  # Per-column missing value counts
+    data_quality_score = Column(Float, nullable=True)  # 0.0-1.0
+    
+    # Download options
+    result_csv_path = Column(String(500), nullable=True)
+    result_xlsx_path = Column(String(500), nullable=True)
+    result_pdf_path = Column(String(500), nullable=True)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    job = relationship("BackgroundJob")
+    file = relationship("Attachment")
+
+
+class AIQualityMetrics(Base):
+    """AI quality metrics tracking"""
+    __tablename__ = "ai_quality_metrics"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    
+    # Request tracking
+    request_id = Column(String(100), nullable=False, index=True)
+    user_id = Column(String, ForeignKey("users.id"), nullable=True)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
+    
+    # AI routing information
+    intent = Column(String(50), nullable=True)
+    selected_source = Column(String(50), nullable=True)  # OFFICIAL_WEBSITE, DATABASE, RAG, GEMINI
+    provider = Column(String(50), nullable=True)  # gemini, local
+    model = Column(String(100), nullable=True)
+    
+    # Performance metrics
+    latency_ms = Column(Integer, nullable=True)
+    confidence_score = Column(Float, nullable=True)
+    
+    # Quality assessment
+    answer_success = Column(Boolean, nullable=True)  # True if answer was helpful
+    tool_failure = Column(Boolean, default=False)
+    retrieval_failure = Column(Boolean, default=False)
+    
+    # Feedback
+    user_feedback = Column(String(20), nullable=True)  # helpful, unhelpful, reported
+    feedback_reason = Column(Text, nullable=True)
+    
+    # Knowledge gaps
+    knowledge_gap_detected = Column(Boolean, default=False)
+    gap_topic = Column(String(255), nullable=True)
+    
+    # Error tracking
+    error_category = Column(String(50), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    user = relationship("User")
+    conversation = relationship("Conversation")
+
+
+class EvaluationDataset(Base):
+    """Protected evaluation dataset for AI testing"""
+    __tablename__ = "evaluation_dataset"
+    
+    id = Column(String, primary_key=True, default=generate_uuid)
+    
+    # Question categorization
+    question = Column(Text, nullable=False)
+    question_type = Column(String(50), nullable=False)  # AIT_SPECIFIC, GENERAL_KNOWLEDGE, ACADEMIC
+    intent = Column(String(50), nullable=False)
+    language = Column(String(10), default="en")
+    
+    # Course/context information
+    course = Column(String(50), nullable=True)
+    semester = Column(Integer, nullable=True)
+    subject = Column(String(100), nullable=True)
+    
+    # Ground truth
+    expected_source = Column(String(50), nullable=False)  # OFFICIAL_WEBSITE, DATABASE, RAG, GEMINI
+    expected_intent = Column(String(50), nullable=False)
+    key_entities = Column(JSON, default=dict)
+    
+    # Expected answer elements
+    expected_answer_contains = Column(JSON, default=list)  # Key phrases that should be in answer
+    forbidden_phrases = Column(JSON, default=list)  # Phrases that should NOT be in answer
+    
+    # Testing metadata
+    category = Column(String(50), nullable=False)  # AIT_QUESTION, GTU_QUESTION, FILE_QUESTION, IMAGE_QUESTION, SECURITY_TEST
+    difficulty = Column(String(30), default="MEDIUM")  # EASY, MEDIUM, HARD
+    priority = Column(String(30), default="NORMAL")  # LOW, NORMAL, HIGH, CRITICAL
+    
+    # Test results
+    last_tested_at = Column(DateTime, nullable=True)
+    last_result = Column(String(30), nullable=True)  # PASS, FAIL, PARTIAL
+    failure_reason = Column(Text, nullable=True)
+    
+    # Active status
+    is_active = Column(Boolean, default=True)
+    version = Column(Integer, default=1)
+    
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))

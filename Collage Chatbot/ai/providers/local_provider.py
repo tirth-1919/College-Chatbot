@@ -49,15 +49,24 @@ class LocalProvider(AIProvider):
     def _synthesize_fallback(self, prompt: str, context: Optional[str]) -> str:
         if context and context.strip():
             return f"Based on verified AIT records:\n\n{context.strip()}"
-        
+
         # Generate context-aware fallback without echoing the query
         prompt_lower = prompt.lower().strip()
-        
-        # Educational topic fallbacks
-        if any(word in prompt_lower for word in ["python", "java", "dbms", "normalization", "machine learning", "ai", "algorithm"]):
+
+        # Educational topic fallbacks remain useful when an external provider is unavailable.
+        if "recursion" in prompt_lower:
             return (
-                "I'd be happy to help you learn about this topic! Could you tell me what specific aspect you'd like to explore? "
-                "For example, are you looking for definitions, practical examples, implementation details, or study resources?"
+                "Recursion is a programming technique where a function calls itself to solve a problem by reducing it to smaller versions of the same problem. "
+                "A recursive function needs a base case to stop and a recursive case that moves toward that base case."
+            )
+        if "python" in prompt_lower:
+            return (
+                "Python is a high-level, general-purpose programming language known for readable syntax. "
+                "It is widely used for web development, automation, data analysis, artificial intelligence, and scripting."
+            )
+        if any(word in prompt_lower for word in ["java", "dbms", "normalization", "machine learning", "ai", "algorithm"]):
+            return (
+                "This is a core computing topic. It is best understood through its definition, key concepts, and practical examples; ask a focused follow-up for code or a worked example."
             )
         elif any(word in prompt_lower for word in ["university", "college", "best", "compare"]):
             return (
@@ -69,10 +78,8 @@ class LocalProvider(AIProvider):
                 "I can help you with exam preparation and study strategies! Would you like guidance on specific subjects, time management techniques, or practice questions?"
             )
         else:
-            return (
-                "I'd be happy to help you with that! Could you provide more details about what you'd like to know? "
-                "I can assist with AIT-specific information (courses, fees, faculty, facilities) or general academic questions."
-            )
+            # Unsupported institutional facts must be resolved from verified sources.
+            return ""
 
     async def generate_stream(
         self,

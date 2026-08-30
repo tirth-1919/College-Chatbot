@@ -235,10 +235,12 @@ def get_results(
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user)
 ):
-    # Private student results
-    target_enrollment = enrollment or (current_user.enrollment_number if current_user else None)
-    if not target_enrollment:
-        return []
+    # Results are private and must always be scoped to the authenticated student.
+    if not current_user or not current_user.enrollment_number:
+        raise HTTPException(status_code=401, detail="Authentication required to access student results")
+    if enrollment and enrollment != current_user.enrollment_number:
+        raise HTTPException(status_code=403, detail="Access to this student result is denied")
+    target_enrollment = current_user.enrollment_number
     results = db.query(Result).filter(Result.student_enrollment == target_enrollment).all()
     return [
         {

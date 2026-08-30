@@ -240,6 +240,40 @@ class ObservabilityMiddleware:
         self.metrics = MetricsCollector()
         self.context_stack = []
     
+    async def __call__(self, request, call_next):
+        """FastAPI middleware call method"""
+        import time
+        start_time = time.time()
+        
+        # Create request context
+        context = RequestContext()
+        request_id = request.headers.get("X-Request-ID", context.request_id)
+        context.request_id = request_id
+        
+        self.context_stack.append(context)
+        
+        try:
+            response = await call_next(request)
+            
+            # Calculate duration
+            duration_ms = (time.time() - start_time) * 1000
+            
+            # Log request
+            self.log_request(
+                method=request.method,
+                path=request.url.path,
+                status_code=response.status_code,
+                duration_ms=duration_ms
+            )
+            
+            # Add request ID to response headers
+            response.headers["X-Request-ID"] = context.request_id
+            
+            return response
+            
+        finally:
+            self.context_stack.pop()
+    
     @contextmanager
     def request_context(self, request_id: str = None):
         """Create request context"""

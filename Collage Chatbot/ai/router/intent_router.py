@@ -40,7 +40,9 @@ class AIRouter:
         user_id: Optional[str] = None,
         role: str = "STUDENT",
         mode: str = "TEXT",
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        think: bool = False,
+        tool: Optional[str] = None
     ) -> Dict[str, Any]:
         return await self.resolver.resolve_question(
             db=db,
@@ -48,5 +50,7 @@ class AIRouter:
             user_id=user_id,
             role=role,
             mode=mode,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            think=think,
+            tool=tool
         )

@@ -1,7 +1,7 @@
-import os
+﻿import os
 from typing import List, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import AnyHttpUrl, validator
+from pydantic import AnyHttpUrl, validator, model_validator
 
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
@@ -10,7 +10,8 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 5001
     API_V1_STR: str = "/api/v1"
-    SECRET_KEY: str = "ait-secret-key-production-replace-in-real-env-must-be-32-chars-long"
+    SECRET_KEY: str = ""
+    CSRF_SECRET_KEY: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
     REAUTH_TOKEN_EXPIRE_MINUTES: int = 10  # 10 mins for destructive re-auth token
@@ -99,6 +100,20 @@ class Settings(BaseSettings):
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:5000,http://127.0.0.1:5000,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
     
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        production = self.ENVIRONMENT.lower() in {"production", "prod"}
+        if production:
+            if not self.SECRET_KEY or len(self.SECRET_KEY) < 32:
+                raise ValueError("SECRET_KEY must be configured with at least 32 characters in production")
+            if not self.CSRF_SECRET_KEY or len(self.CSRF_SECRET_KEY) < 32:
+                raise ValueError("CSRF_SECRET_KEY must be configured with at least 32 characters in production")
+            if bool(self.DEBUG):
+                raise ValueError("DEBUG must be false in production")
+            if "*" in self.ALLOWED_ORIGINS:
+                raise ValueError("Wildcard CORS origins are not allowed in production")
+        return self
+
     # Google OAuth Configuration
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
@@ -118,3 +133,6 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+

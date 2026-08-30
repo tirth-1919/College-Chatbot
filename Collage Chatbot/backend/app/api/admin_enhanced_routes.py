@@ -11,9 +11,14 @@ from backend.app.services.analytics_service import AnalyticsService
 from backend.app.services.backup_service import BackupService
 from backend.app.security.ai_safety import AISafetyService
 from backend.app.security.enhanced_auth import EnhancedAuthService
+from backend.app.security.auth import require_role
 from typing import Optional
 
-router = APIRouter(prefix="/admin/enhanced", tags=["Enhanced Admin"])
+router = APIRouter(
+    prefix="/admin/enhanced",
+    tags=["Enhanced Admin"],
+    dependencies=[Depends(require_role(["ADMIN", "SUPER_ADMIN"]))]
+ )
 
 
 # Knowledge Management Routes
@@ -143,7 +148,7 @@ async def get_user_list(db: Session = Depends(get_db)):
                 'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
-                'role': user.role,
+                'roles': [role.name for role in user.roles],
                 'is_active': user.is_active,
                 'created_at': user.created_at.isoformat() if user.created_at else None
             }

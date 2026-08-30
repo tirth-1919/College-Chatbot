@@ -23,6 +23,8 @@ from rag.conflicts.conflict_detector import KnowledgeConflictDetector
 from ai.safety.grounding import GroundingValidator
 from ai.providers.gemini_provider import GeminiProvider
 from ai.providers.local_provider import LocalProvider
+from ai.response_intelligence import ResponseDepth, depth_instruction, select_response_depth
+from ai.academic_catalog import academic_entities, is_academic_query, query_catalog
 from voice.tts.tts_engine import TextToSpeechEngine
 from voice.audio_cache.audio_manager import AudioCacheManager
 from backend.app.security.pii import ContentSanitizer
@@ -474,7 +476,35 @@ class SourceResolver:
                         evidence_text=evidence_text
                     )
 
-        # ----------------- 3. SYLLABUS / CURRICULUM QUERY -----------------
+        # ----------------- 3. COURSE SUBJECTS QUERY -----------------
+        if intent == "COURSE_SUBJECTS" or any(s in lowered for s in ["subjects covered", "subjects included", "which subject", "what subjects"]):
+            course_code = entities.get("course", "BCA")
+            course = db.query(Course).filter(Course.code == course_code).first()
+            if course:
+                subjects = db.query(Subject).filter(
+                    Subject.course_id == course.id,
+                    Subject.is_active == True
+                ).order_by(Subject.semester, Subject.code).all()
+                if subjects:
+                    subject_lines = [f"- **{subject.name}** ({subject.code}), Semester {subject.semester}" for subject in subjects]
+                    answer = f"The verified subjects currently listed for **{course.name} ({course.code})** are:\n\n" + "\n".join(subject_lines)
+                    return SourceResolutionResult(
+                        has_verified_answer=True,
+                        answer=answer,
+                        selected_source="DATABASE",
+                        authority_level="PRIORITY 2",
+                        sources=[{
+                            "source_type": "ADMIN_VERIFIED_DATABASE",
+                            "title": f"AIT {course.code} Subject Register",
+                            "source_url": "https://www.aitindia.in/academics/syllabus",
+                            "page_or_record": f"{course.code} curriculum",
+                            "authority_level": "PRIORITY 2",
+                            "verified_at": "2026-08-27"
+                        }],
+                        evidence_text="; ".join(subject.name for subject in subjects)
+                    )
+
+        # ----------------- 4. SYLLABUS / CURRICULUM QUERY -----------------
         if intent == "SYLLABUS_QUERY" or any(s in lowered for s in ["syllabus", "curriculum", "course outline", "subject outline", "units"]):
             subject_name = entities.get("subject", "")
             if not subject_name:
@@ -772,21 +802,66 @@ class SourceResolver:
             selected_source="DATABASE"
         )
 
-    def is_ait_specific_query(self, query: str) -> bool:
-        """
-        Determines whether the question specifically asks for AIT college institutional facts.
-        If true and unverified by Website or DB, Gemini MUST NOT hallucinate an answer.
-        """
+    def classify_question_type(
+        self,
+        query: str,
+        intent: str,
+        entities: Dict[str, Any],
+        conversation_id: Optional[str] = None
+    ) -> str:
+        # Classify routing without an additional model call. Explicit institutional
+        # references and AIT administrative intents are AIT-specific. Course-only
+        # questions become AIT-specific when conversation context establishes AIT.
         lowered = query.lower()
-        ait_institutional_keywords = [
-            "ait", "ahmedabad institute of technology", "hod", "head of department",
-            "principal", "director", "dean", "our college", "this college", "campus fee",
-            "bca hod", "cse hod", "it hod", "fee structure", "exam timetable",
-            "college faculty", "college fee", "college notice", "ait fee", "ait faculty",
-            "ait exam", "ait syllabus", "ait timetable", "ait library", "ait result",
-            "ait event", "ait placement", "ait bus", "ait hostel"
-        ]
-        return any(k in lowered for k in ait_institutional_keywords)
+        ait_terms = (
+            "ait", "ahmedabad institute of technology", "our college", "this college",
+            "college fee", "college faculty", "college notice", "campus fee",
+            "ait fee", "ait faculty", "ait exam", "ait syllabus", "ait timetable",
+            "ait library", "ait result", "ait event", "ait placement", "ait hostel",
+            "ait principal", "principal of ait", "current principal"
+        )
+        institutional_intents = {
+            "ADMISSION", "ELIGIBILITY", "FEE_QUERY", "FACULTY_SUBJECT_QUERY",
+            "TIMETABLE_QUERY", "EXAM_QUERY", "RESULT_QUERY", "NOTICE_QUERY",
+            "COLLEGE_OVERVIEW", "FACILITIES", "FACILITY_IMAGE_SEARCH", "HOSTEL",
+            "LIBRARY", "PLACEMENT", "PRINCIPAL", "CONTACT", "CAMPUS",
+            "COURSE_SUBJECTS", "SYLLABUS_QUERY"
+        }
+        if any(term in lowered for term in ait_terms):
+            return "AIT_SPECIFIC"
+        if intent in {"EVENT_HISTORY", "EVENT_IMAGE_SEARCH", "FACILITY_IMAGE_SEARCH", "SOURCE_REQUEST"}:
+            return "AIT_SPECIFIC"
+        # Academic AIT records are institutional when a course or subject is
+        # named, even if a broad "what is" rule won the intent match.
+        if any(term in lowered for term in ("syllabus", "curriculum", "subjects covered", "subjects included")) and (
+            entities.get("course") or entities.get("subject")
+        ):
+            return "AIT_SPECIFIC"
+        # Other institutions are general-knowledge questions, even when the
+        # classifier assigns a broad course/college intent.
+        if any(term in lowered for term in ("nirma", "university", "another college", "other college")) and "ait" not in lowered:
+            return "GENERAL_KNOWLEDGE"
+        if intent in institutional_intents and (
+            intent != "COURSE_SUBJECTS" or entities.get("course")
+        ) and not any(term in lowered for term in ("generally", "in general", "commonly")):
+            return "AIT_SPECIFIC"
+        if intent == "GENERAL_EDUCATION":
+            return "GENERAL_KNOWLEDGE"
+        if intent == "COURSE_SUBJECTS" and conversation_id:
+            context = self.intent_classifier.context_manager.get_or_create_context(conversation_id)
+            if context.last_entities.get("course") or "bca" in (context.last_query or "").lower():
+                return "AIT_SPECIFIC"
+        return "GENERAL_KNOWLEDGE"
+
+    def is_ait_specific_query(self, query: str) -> bool:
+        # Backward-compatible lexical AIT-specific check."
+        lowered = query.lower()
+        return any(term in lowered for term in (
+            "ait", "ahmedabad institute of technology", "our college", "this college",
+            "hod", "principal", "director", "dean", "college fee", "college faculty",
+            "ait fee", "ait faculty", "ait exam", "ait syllabus", "ait timetable",
+            "ait library", "ait result", "ait event", "ait placement", "ait hostel"
+        ))
 
     async def search_approved_rag(
         self,
@@ -863,14 +938,11 @@ class SourceResolver:
     async def query_gemini_general(
         self,
         query: str,
-        language: str = "en"
+        language: str = "en",
+        response_depth: ResponseDepth = ResponseDepth.NORMAL
     ) -> SourceResolutionResult:
-        """
-        TIER 4: Gemini AI / General Educational Reasoning
-        Permitted for general educational, programming, general knowledge, or other universities.
-        Strict anti-hallucination system prompt enforces zero AIT fabrication.
-        Never uses generic template fallbacks that echo the user's query.
-        """
+        # Gemini general-knowledge and fallback generation. The prompt below keeps
+        # unsupported current AIT facts from being presented as verified.
         lowered = query.lower()
         sys_prompt = (
             "You are the student-facing AI assistant for Ahmedabad Institute of Technology (AIT).\n\n"
@@ -889,6 +961,7 @@ class SourceResolver:
             "- internal tools\n"
             "- system errors\n\n"
             "The student must experience you as one unified AI assistant.\n\n"
+            f"Response depth: {depth_instruction(response_depth)}\n\n"
             "Answer general educational and conversational questions normally.\n\n"
             "For AIT-specific questions, use verified context when it is provided.\n\n"
             "Do not invent precise AIT-specific facts such as:\n"
@@ -975,11 +1048,8 @@ class SourceResolver:
                 if local_res.get("success") and local_res.get("text") and len(local_res.get("text", "").strip()) > 10:
                     answer = local_res["text"].strip()
                 else:
-                    # Generic clarification without echoing query
-                    answer = (
-                        "I'd be happy to help you with that! Could you provide more details about what specific aspect you'd like to know about? "
-                        "For example, are you looking for definitions, practical examples, implementation details, or study resources?"
-                    )
+                    # Keep provider failures user-facing and actionable.
+                    answer = "I'm having trouble processing that right now. Please try again."
 
         return SourceResolutionResult(
             has_verified_answer=True,
@@ -1006,19 +1076,35 @@ class SourceResolver:
         role: str = "STUDENT",
         mode: str = "TEXT",
         conversation_id: Optional[str] = None,
-        previous_messages: Optional[List[Any]] = None
+        previous_messages: Optional[List[Any]] = None,
+        think: bool = False,
+        tool: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Main Dynamic 3-Tier Source Resolution Engine with Intelligent Query Understanding:
-          1. Normalize Query
-          2. Extract Intent & Entities with Context
-          3. Rewrite Query for Better Retrieval
-          4. Route Through TIER 1-3 Sources
-        """
+        # Main dynamic source resolution engine: understand, rewrite, classify,
+        # then route through the appropriate source priority.
         start_time = datetime.now(UTC)
         sanitized_query = self.content_sanitizer.sanitize_input(query)
         language = self.detect_language(sanitized_query)
         lowered_query = sanitized_query.lower()
+        previous_depth = None
+        if conversation_id:
+            from backend.app.models.entities import Message
+            previous_assistant = (
+                db.query(Message)
+                .filter(Message.conversation_id == conversation_id, Message.role == "assistant")
+                .order_by(Message.created_at.desc())
+                .first()
+            )
+            if previous_assistant and previous_assistant.entities:
+                stored_depth = previous_assistant.entities.get("response_depth")
+                if stored_depth in {depth.value for depth in ResponseDepth}:
+                    previous_depth = ResponseDepth(stored_depth)
+        response_depth = select_response_depth(sanitized_query, previous_depth)
+        # Controls alter answer effort/routing hints only; private reasoning is never returned.
+        if think:
+            response_depth = ResponseDepth.DEEP
+        if tool and tool.upper() == "WEB_SEARCH":
+            lowered_query = f"latest current web search: {lowered_query}"
 
         # ----------------- 0. SAFETY & CONFIDENTIALITY GUARD -----------------
         if any(c in lowered_query for c in ["salary", "confidential", "password", "private key"]) or (
@@ -1086,7 +1172,8 @@ class SourceResolver:
             conversation_id=conversation_id
         )
         entities = metadata.get("entities", {})
-        
+        # Persist only the policy result for continuity; it is never exposed in the UI.
+        entities["response_depth"] = response_depth.value
         # Query rewriting for better retrieval (spelling correction, short query expansion)
         context_entities = self.intent_classifier.context_manager.get_or_create_context(conversation_id).last_entities if conversation_id else {}
         rewrite_result = self.query_rewriter.rewrite_query(
@@ -1095,20 +1182,15 @@ class SourceResolver:
             entities=entities,
             context_entities=context_entities
         )
-        
-        # Store rewrite metadata for logging but use original query for routing
-        # The rewritten query is available if needed for retrieval optimization
-        entities["query_rewrite"] = rewrite_result
 
-        # Intent classification & Entity extraction with semantic intelligence
-        intent, intent_conf, metadata = self.intent_classifier.predict(
-            sanitized_query,
-            conversation_id=conversation_id
-        )
-        entities = metadata.get("entities", {})
-        # Entity extraction is now done inside the classifier, but we keep it for compatibility
+        # The rewrite is used internally for retrieval and is never shown to the user.
+        entities["query_rewrite"] = rewrite_result
         if not entities:
             entities = self.entity_extractor.extract_entities(sanitized_query)
+
+        question_type = self.classify_question_type(
+            sanitized_query, intent, entities, conversation_id=conversation_id
+        )
 
         # ----------------- 0c. GREETINGS & CASUAL HELLO -----------------
         if intent == "GREETING" or any(g == lowered_query.strip("!.,? ") for g in ["hi", "hello", "hey", "kem cho", "namaste", "good morning", "good afternoon", "good evening"]):
@@ -1135,10 +1217,33 @@ class SourceResolver:
                 is_general_knowledge=True
             )
 
+        # General questions are answered directly by Gemini. They must not consume
+        # AIT website/database/RAG capacity or inherit AIT-only assumptions.
+        if question_type == "GENERAL_KNOWLEDGE":
+            gemini_res = await self.query_gemini_general(sanitized_query, language=language, response_depth=response_depth)
+            return self._build_response(
+                ans=gemini_res.answer,
+                selected_source=gemini_res.selected_source,
+                authority_level=gemini_res.authority_level,
+                sources=gemini_res.sources,
+                images=gemini_res.images,
+                suggested_followups=gemini_res.suggested_followups,
+                evidence_text=gemini_res.evidence_text,
+                intent=intent,
+                entities=entities,
+                confidence=intent_conf,
+                start_time=start_time,
+                conversation_id=conversation_id,
+                mode=mode,
+                language=language,
+                is_general_knowledge=True,
+                db=db
+            )
+
         # ----------------- 0d. SHORT/AMBIGUOUS QUESTION HANDLING -----------------
         # Handle very short inputs with context-aware responses
         short_inputs = ["u", "how", "what", "why", "ok", "yes", "no", "can", "will", "do", "is", "are"]
-        if lowered_query.strip("!.,? ") in short_inputs or len(lowered_query.strip("!.,? ")) <= 2:
+        if lowered_query.strip("!.,? ") in short_inputs or len(lowered_query.strip("!.,? ")) <= 1:
             # Check if we have conversation context
             if conversation_id:
                 from backend.app.models.entities import Message
@@ -1148,11 +1253,11 @@ class SourceResolver:
                     .order_by(Message.created_at.desc())
                     .first()
                 )
-                
+
                 if prev_msg and prev_msg.content:
                     # Use context to provide relevant response
                     prev_content_lower = prev_msg.content.lower()
-                    
+
                     # Detect what the previous topic was
                     if "dbms" in prev_content_lower or "database" in prev_content_lower:
                         context_answer = "If you mean how normalization works in DBMS, it organizes data into related tables to reduce redundancy and improve data integrity. Would you like me to explain the specific normal forms (1NF, 2NF, 3NF, BCNF)?"
@@ -1166,7 +1271,7 @@ class SourceResolver:
                         context_answer = "If you're asking about faculty, I can help you find who teaches specific subjects, their office hours, or contact information. Which subject or department are you interested in?"
                     else:
                         context_answer = "I'd be happy to help you with more details about that topic. Could you please specify what aspect you'd like to know more about?"
-                    
+
                     return self._build_response(
                         ans=context_answer,
                         selected_source="CONVERSATION_CONTEXT",
@@ -1182,10 +1287,10 @@ class SourceResolver:
                         db=db,
                         is_general_knowledge=True
                     )
-            
+
             # No context available - ask for clarification
             clarification_answer = "Sure — what would you like to know about? I can help you with AIT course details, fees, faculty information, timetables, exam schedules, or general academic questions."
-            
+
             return self._build_response(
                 ans=clarification_answer,
                 selected_source="CLARIFICATION",
@@ -1270,7 +1375,7 @@ class SourceResolver:
             "plz": "please",
             "hlp": "help"
         }
-        
+
         for typo, correction in common_typos.items():
             if typo in lowered_query:
                 typo_correction_answer = f"I think you meant '{correction}'. Let me help you with that. If that's not what you meant, please rephrase your question."
@@ -1290,11 +1395,50 @@ class SourceResolver:
                     is_general_knowledge=True
                 )
 
+        # Curriculum requests are resolved before institutional website/RAG routing.
+        # Only verified catalog records can produce an official subject list.
+        catalog_entities = academic_entities(sanitized_query)
+        if is_academic_query(sanitized_query, catalog_entities):
+            catalog_result = query_catalog(db, sanitized_query, catalog_entities)
+            if catalog_result and catalog_result["verified"]:
+                return self._build_response(
+                    ans=catalog_result["answer"], selected_source="ACADEMIC_CATALOG",
+                    authority_level="VERIFIED_CURRICULUM", sources=[], intent="ACADEMIC_CATALOG",
+                    entities={**entities, **catalog_entities}, confidence=1.0, start_time=start_time,
+                    conversation_id=conversation_id, mode=mode, language=language, db=db,
+                    evidence_text=catalog_result["answer"]
+                )
+            if catalog_result:
+                return self._build_response(
+                    ans=catalog_result["answer"], selected_source="ACADEMIC_CATALOG",
+                    authority_level="UNVERIFIED_OR_UNAVAILABLE", sources=[], intent="ACADEMIC_CATALOG",
+                    entities={**entities, **catalog_entities}, confidence=1.0, start_time=start_time,
+                    conversation_id=conversation_id, mode=mode, language=language, db=db
+                )
+
         # =========================================================
         # TIER 1: OFFICIAL AIT WEBSITE (https://www.aitindia.in)
         # =========================================================
         # Use rewritten query for retrieval if it improves the query significantly
         retrieval_query = rewrite_result["rewritten_query"] if rewrite_result["was_rewritten"] else sanitized_query
+        # Current institutional leadership must be verified rather than inferred
+        # from a generic faculty record.
+        if any(term in lowered_query for term in ("hod", "head of department", "principal", "director", "dean")):
+            return self._build_response(
+                ans="I could not verify that current AIT information from the available official records or the verified college database.",
+                selected_source="SAFETY_GUARD",
+                authority_level="VERIFIED_GUARD",
+                sources=[],
+                intent=intent,
+                entities=entities,
+                confidence=intent_conf,
+                start_time=start_time,
+                conversation_id=conversation_id,
+                mode=mode,
+                language=language,
+                db=db
+            )
+
         website_res = await self.search_official_ait_website(db, retrieval_query, intent, entities)
         if website_res.has_verified_answer:
             return self._build_response(
@@ -1366,13 +1510,37 @@ class SourceResolver:
         # =========================================================
         # Answer-first fallback: Always attempt Gemini for non-safety-guarded queries
         # Student should never see "not found in website/database" messages
-        
+
         # STRICT SAFETY RULE: If the query is AIT-specific and not found in Tier 1, 2, or 3,
         # let Gemini handle it with strict anti-hallucination instructions.
         # Do NOT return "not found" messages to students.
-        
-        # General educational / General Knowledge query -> Gemini
-        gemini_res = await self.query_gemini_general(sanitized_query, language=language)
+
+        # Gemini is not authoritative for current institutional people, prices,
+        # or schedules. Do not turn an unverified current AIT fact into a guess.
+        current_fact_terms = (
+            "principal", "hod", "head of department", "director", "dean",
+            "canteen price", "canteen cost", "current faculty", "current fee",
+            "current timetable", "current exam date", "current notice"
+        )
+        if question_type == "AIT_SPECIFIC" and any(term in lowered_query for term in current_fact_terms):
+            return self._build_response(
+                ans="I could not verify that current AIT information from the available official records or the verified college database.",
+                selected_source="SAFETY_GUARD",
+                authority_level="VERIFIED_GUARD",
+                sources=[],
+                intent=intent,
+                entities=entities,
+                confidence=intent_conf,
+                start_time=start_time,
+                conversation_id=conversation_id,
+                mode=mode,
+                language=language,
+                db=db
+            )
+
+        # General questions and non-sensitive AIT misses receive a natural
+        # Gemini answer; internal routing is never exposed.
+        gemini_res = await self.query_gemini_general(sanitized_query, language=language, response_depth=response_depth)
         return self._build_response(
             ans=gemini_res.answer,
             selected_source=gemini_res.selected_source,

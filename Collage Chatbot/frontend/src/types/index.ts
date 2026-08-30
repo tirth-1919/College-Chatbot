@@ -35,7 +35,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   answer?: string;
-  status?: 'thinking' | 'complete' | 'error';
+  status?: 'thinking' | 'searching' | 'reading' | 'analyzing' | 'complete' | 'error' | 'cancelled';
+  tool_status?: string;
   conversation_id?: string;
   message_id?: string;
   language?: string;
