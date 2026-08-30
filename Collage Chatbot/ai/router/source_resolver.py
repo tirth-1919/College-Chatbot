@@ -7,7 +7,6 @@ Priority:
 """
 
 import re
-import html
 import logging
 from datetime import datetime, UTC
 from typing import Dict, Any, List, Optional, Tuple
@@ -28,7 +27,8 @@ from voice.tts.tts_engine import TextToSpeechEngine
 from voice.audio_cache.audio_manager import AudioCacheManager
 from backend.app.security.pii import ContentSanitizer
 from ml.intent.intent_classifier import IntentClassifier
-from ml.entity.entity_extractor import CollegeEntityExtractor
+from ml.intent.entity_extractor import CollegeEntityExtractor
+from ml.intent.query_rewriter import QueryRewriter
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,7 @@ class SourceResolver:
             context_ttl_seconds=context_ttl_seconds
         )
         self.entity_extractor = CollegeEntityExtractor()
+        self.query_rewriter = QueryRewriter()
         self.gemini_provider = GeminiProvider()
         self.local_provider = LocalProvider()
         self.tts_engine = TextToSpeechEngine()
@@ -872,11 +873,41 @@ class SourceResolver:
         """
         lowered = query.lower()
         sys_prompt = (
-            "You are the AIT College AI Assistant. You are answering a general educational, computer science, "
-            "or general university/knowledge question. "
-            "CRITICAL SAFETY RULE: You MUST NOT invent, guess, or hallucinate any Ahmedabad Institute of Technology (AIT) "
-            "specific facts, faculty names, HODs, fees, timetables, or exam schedules. "
-            "Explain general technical or academic concepts clearly, naturally, comprehensively, and accurately."
+            "You are the student-facing AI assistant for Ahmedabad Institute of Technology (AIT).\n\n"
+            "Return only the final natural-language answer to the student's question.\n\n"
+            "Never mention:\n"
+            "- official website lookup\n"
+            "- database lookup\n"
+            "- source resolution\n"
+            "- RAG\n"
+            "- retrieval\n"
+            "- fallback\n"
+            "- Gemini\n"
+            "- internal routing\n"
+            "- confidence\n"
+            "- intent classification\n"
+            "- internal tools\n"
+            "- system errors\n\n"
+            "The student must experience you as one unified AI assistant.\n\n"
+            "Answer general educational and conversational questions normally.\n\n"
+            "For AIT-specific questions, use verified context when it is provided.\n\n"
+            "Do not invent precise AIT-specific facts such as:\n"
+            "- fees\n"
+            "- faculty assignments\n"
+            "- exam dates\n"
+            "- notices\n"
+            "- official policies\n"
+            "- contact numbers\n"
+            "- current schedules\n"
+            "- current syllabus details\n\n"
+            "when verified information is unavailable.\n\n"
+            "For general/descriptive questions, provide a useful natural answer without claiming unsupported precise facts.\n\n"
+            "If the exact current AIT-specific information cannot be verified, answer helpfully while clearly avoiding fabricated details.\n\n"
+            "Do not apologize because a source was unavailable.\n\n"
+            "Do not say that information was not found.\n\n"
+            "Do not tell the user to check the database.\n\n"
+            "Do not tell the user that the official website was searched.\n\n"
+            "Return ONLY the answer."
         )
 
         gemini_res = await self.gemini_provider.generate_response(query, system_instruction=sys_prompt)
@@ -978,10 +1009,11 @@ class SourceResolver:
         previous_messages: Optional[List[Any]] = None
     ) -> Dict[str, Any]:
         """
-        Main Dynamic 3-Tier Source Resolution Engine:
-          TIER 1 — Official AIT Website
-          TIER 2 — Verified AIT Database
-          TIER 3 — Gemini AI (Zero-Hallucination for AIT facts)
+        Main Dynamic 3-Tier Source Resolution Engine with Intelligent Query Understanding:
+          1. Normalize Query
+          2. Extract Intent & Entities with Context
+          3. Rewrite Query for Better Retrieval
+          4. Route Through TIER 1-3 Sources
         """
         start_time = datetime.now(UTC)
         sanitized_query = self.content_sanitizer.sanitize_input(query)
@@ -1046,6 +1078,27 @@ class SourceResolver:
                     language=target_lang,
                     db=db
                 )
+
+        # ----------------- 0c. INTELLIGENT QUERY UNDERSTANDING -----------------
+        # Intent classification & Entity extraction with context
+        intent, intent_conf, metadata = self.intent_classifier.predict(
+            sanitized_query,
+            conversation_id=conversation_id
+        )
+        entities = metadata.get("entities", {})
+        
+        # Query rewriting for better retrieval (spelling correction, short query expansion)
+        context_entities = self.intent_classifier.context_manager.get_or_create_context(conversation_id).last_entities if conversation_id else {}
+        rewrite_result = self.query_rewriter.rewrite_query(
+            original_query=sanitized_query,
+            intent=intent,
+            entities=entities,
+            context_entities=context_entities
+        )
+        
+        # Store rewrite metadata for logging but use original query for routing
+        # The rewritten query is available if needed for retrieval optimization
+        entities["query_rewrite"] = rewrite_result
 
         # Intent classification & Entity extraction with semantic intelligence
         intent, intent_conf, metadata = self.intent_classifier.predict(
@@ -1240,7 +1293,9 @@ class SourceResolver:
         # =========================================================
         # TIER 1: OFFICIAL AIT WEBSITE (https://www.aitindia.in)
         # =========================================================
-        website_res = await self.search_official_ait_website(db, sanitized_query, intent, entities)
+        # Use rewritten query for retrieval if it improves the query significantly
+        retrieval_query = rewrite_result["rewritten_query"] if rewrite_result["was_rewritten"] else sanitized_query
+        website_res = await self.search_official_ait_website(db, retrieval_query, intent, entities)
         if website_res.has_verified_answer:
             return self._build_response(
                 ans=website_res.answer,
@@ -1263,7 +1318,7 @@ class SourceResolver:
         # =========================================================
         # TIER 2: VERIFIED AIT DATABASE
         # =========================================================
-        db_res = await self.search_verified_database(db, sanitized_query, intent, entities, user_id=user_id, role=role)
+        db_res = await self.search_verified_database(db, retrieval_query, intent, entities, user_id=user_id, role=role)
         if db_res.has_verified_answer:
             return self._build_response(
                 ans=db_res.answer,
@@ -1286,7 +1341,7 @@ class SourceResolver:
         # =========================================================
         # TIER 3: APPROVED AIT RAG KNOWLEDGE BASE
         # =========================================================
-        rag_res = await self.search_approved_rag(db, sanitized_query, intent, entities)
+        rag_res = await self.search_approved_rag(db, retrieval_query, intent, entities)
         if rag_res.has_verified_answer:
             return self._build_response(
                 ans=rag_res.answer,
@@ -1309,38 +1364,13 @@ class SourceResolver:
         # =========================================================
         # TIER 4: GEMINI AI (General Knowledge & Fallback)
         # =========================================================
-        # STRICT SAFETY RULE: If the query is AIT-specific and not found in Tier 1, 2, or 3, NEVER hallucinate.
-        if self.is_ait_specific_query(sanitized_query) or intent in ["FACULTY_SUBJECT_QUERY", "FEE_QUERY", "TIMETABLE_QUERY", "EXAM_QUERY", "NOTICE_QUERY"]:
-            if "hod" in lowered_query:
-                ans = "I couldn't verify the current BCA HOD from AIT's official website or verified college database."
-            elif "canteen" in lowered_query:
-                ans = "I couldn't verify the current AIT canteen prices from the available official information."
-            else:
-                ans = "I couldn't find verified AIT information about that from the official website or verified college database."
-
-            return self._build_response(
-                ans=ans,
-                selected_source="SAFETY_GUARD",
-                authority_level="VERIFIED_GUARD",
-                sources=[{
-                    "source_type": "ADMIN_VERIFIED_DATABASE",
-                    "title": "AIT Official Knowledge Boundary",
-                    "source_url": "https://www.aitindia.in",
-                    "page_or_record": "Strict Zero-Hallucination Guard",
-                    "authority_level": "VERIFIED_GUARD",
-                    "verified_at": "2026-08-27"
-                }],
-                evidence_text="",
-                intent=intent,
-                entities=entities,
-                confidence=1.0,
-                start_time=start_time,
-                conversation_id=conversation_id,
-                mode=mode,
-                language=language,
-                db=db
-            )
-
+        # Answer-first fallback: Always attempt Gemini for non-safety-guarded queries
+        # Student should never see "not found in website/database" messages
+        
+        # STRICT SAFETY RULE: If the query is AIT-specific and not found in Tier 1, 2, or 3,
+        # let Gemini handle it with strict anti-hallucination instructions.
+        # Do NOT return "not found" messages to students.
+        
         # General educational / General Knowledge query -> Gemini
         gemini_res = await self.query_gemini_general(sanitized_query, language=language)
         return self._build_response(
@@ -1381,8 +1411,8 @@ class SourceResolver:
         evidence_text: str = "",
         is_general_knowledge: bool = False
     ) -> Dict[str, Any]:
-        clean_ans = html.unescape(ans)
-        safe_answer = self.content_sanitizer.sanitize_output(clean_ans)
+        # Use comprehensive sanitization to decode HTML entities and clean output
+        safe_answer = self.content_sanitizer.sanitize_output(ans)
 
         # Grounding check
         is_grounded, conf_score, notes = GroundingValidator.check_groundedness(safe_answer, evidence_text, intent)

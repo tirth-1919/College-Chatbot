@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     DEBUG: Union[bool, str] = True
     APP_NAME: str = "AIT College AI Assistant"
     HOST: str = "0.0.0.0"
-    PORT: int = 5000
+    PORT: int = 5001
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = "ait-secret-key-production-replace-in-real-env-must-be-32-chars-long"
     ALGORITHM: str = "HS256"
@@ -98,6 +98,14 @@ class Settings(BaseSettings):
 
     # CORS
     ALLOWED_ORIGINS: str = "http://localhost:5000,http://127.0.0.1:5000,http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000"
+    
+    # Google OAuth Configuration
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:5001/api/v1/auth/google/callback"
+    
+    # Password Reset Configuration
+    PASSWORD_RESET_EXPIRY_MINUTES: int = 60
 
     @property
     def cors_origins(self) -> List[str]:

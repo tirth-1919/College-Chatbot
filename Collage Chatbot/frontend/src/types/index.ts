@@ -7,6 +7,7 @@ export interface User {
   roles: string[];
   enrollment_number?: string;
   current_semester?: number;
+  profile_image_url?: string;
 }
 
 export interface SourceCard {
@@ -49,6 +50,7 @@ export interface ChatMessage {
   is_general_knowledge?: boolean;
   feedback?: string;
   timestamp: string;
+  input_mode?: 'text' | 'voice'; // Track if message was text or voice input
 }
 
 export interface FeeRecord {

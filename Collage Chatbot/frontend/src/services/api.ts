@@ -52,6 +52,67 @@ export const api = {
     }
   },
 
+  async enhancedRegister(data: {
+    full_name: string;
+    email: string;
+    password: string;
+    confirm_password: string;
+    role?: string;
+    enrollment_number?: string;
+    course_code?: string;
+    semester?: number;
+  }): Promise<{ access_token: string; user: User }> {
+    const res = await fetch(`${API_BASE}/auth/register/enhanced`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || 'Registration failed');
+    const responseData = await res.json();
+    setAuthToken(responseData.access_token);
+    return responseData;
+  },
+
+  async forgotPassword(email: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return await res.json();
+  },
+
+  async resetPassword(token: string, newPassword: string, confirmPassword: string): Promise<{ success: boolean; message: string }> {
+    const res = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: token, new_password: newPassword, confirm_password: confirmPassword }),
+    });
+    return await res.json();
+  },
+
+  async getGoogleAuthUrl(redirectUri?: string): Promise<{ auth_url: string; state: string }> {
+    const params = redirectUri ? `?redirect_uri=${encodeURIComponent(redirectUri)}` : '';
+    const res = await fetch(`${API_BASE}/auth/google/auth-url${params}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) throw new Error('Failed to get Google auth URL');
+    return await res.json();
+  },
+
+  async handleGoogleCallback(code: string, state: string): Promise<{ access_token: string; user: User }> {
+    const res = await fetch(`${API_BASE}/auth/google/callback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, state }),
+    });
+    if (!res.ok) throw new Error('Google authentication failed');
+    const data = await res.json();
+    setAuthToken(data.access_token);
+    return data;
+  },
+
   // Chat & Voice
   async sendMessage(message: string, conversationId?: string, mode: 'TEXT' | 'VOICE' = 'TEXT'): Promise<ChatMessage> {
     try {
@@ -173,6 +234,56 @@ export const api = {
       headers: getHeaders(),
       body: JSON.stringify({ message_id: messageId, feedback }),
     });
+  },
+
+  async getConversations(search?: string): Promise<any[]> {
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    const res = await fetch(`${API_BASE}/chat/conversations${params}`, { headers: getHeaders() });
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  async getConversation(conversationId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}`, { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to get conversation');
+    return await res.json();
+  },
+
+  async renameConversation(conversationId: string, title: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/rename`, {
+      method: 'PATCH',
+      headers: getHeaders(),
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error('Failed to rename conversation');
+    return await res.json();
+  },
+
+  async deleteConversation(conversationId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}`, {
+      method: 'DELETE',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to delete conversation');
+    return await res.json();
+  },
+
+  async archiveConversation(conversationId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/archive`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to archive conversation');
+    return await res.json();
+  },
+
+  async pinConversation(conversationId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/chat/conversations/${conversationId}/pin`, {
+      method: 'POST',
+      headers: getHeaders(),
+    });
+    if (!res.ok) throw new Error('Failed to pin conversation');
+    return await res.json();
   },
 
   getVoiceAudioUrl(assetId: string): string {

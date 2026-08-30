@@ -8,6 +8,8 @@ import { StudyCenterView } from './components/StudyCenterView';
 import { AdminView } from './components/AdminView';
 import { VoiceModal } from './components/VoiceModal';
 import { AuthModal } from './components/AuthModal';
+import { ProfileView } from './components/ProfileView';
+import { SettingsView } from './components/SettingsView';
 import { User } from './types';
 import { api, setAuthToken } from './services/api';
 
@@ -19,6 +21,7 @@ export const App: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const [currentConversationId, setCurrentConversationId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     // Attempt auto-login with existing session or default to student
@@ -33,6 +36,7 @@ export const App: React.FC = () => {
     setAuthToken(null);
     setCurrentUser(null);
     setActiveTab('chat');
+    setCurrentConversationId(undefined);
   };
 
   useEffect(() => {
@@ -48,8 +52,24 @@ export const App: React.FC = () => {
 
   const startNewChat = () => {
     setActiveTab('chat');
+    setCurrentConversationId(undefined);
     setMobileSidebarOpen(false);
     window.dispatchEvent(new CustomEvent('ait:new-chat'));
+  };
+
+  const handleOpenConversation = (conversationId: string) => {
+    setCurrentConversationId(conversationId);
+  };
+
+  const handleLoadConversation = (conversationId: string) => {
+    setCurrentConversationId(conversationId);
+  };
+
+  const handleVoiceResponse = (transcript: string, response: any) => {
+    // Update conversation ID if voice response creates a new conversation
+    if (response.conversation_id && response.conversation_id !== currentConversationId) {
+      setCurrentConversationId(response.conversation_id);
+    }
   };
 
   return (
@@ -63,6 +83,8 @@ export const App: React.FC = () => {
         onCloseMobile={() => setMobileSidebarOpen(false)}
         onNewChat={startNewChat}
         currentUser={currentUser}
+        onOpenConversation={handleOpenConversation}
+        onLogout={handleLogout}
       />
       <div className="app-workspace">
         <AppHeader
@@ -77,12 +99,19 @@ export const App: React.FC = () => {
         />
         <main className="app-main">
           {activeTab === 'chat' && (
-            <ChatView onOpenVoiceModal={() => setIsVoiceOpen(true)} />
+            <ChatView 
+              onOpenVoiceModal={() => setIsVoiceOpen(true)} 
+              conversationId={currentConversationId}
+              onLoadConversation={handleLoadConversation}
+              onVoiceResponse={handleVoiceResponse}
+            />
           )}
         {activeTab === 'academic' && <AcademicView />}
         {activeTab === 'gallery' && <VisualGalleryView />}
         {activeTab === 'study' && <StudyCenterView />}
         {activeTab === 'admin' && <AdminView />}
+        {activeTab === 'profile' && <ProfileView currentUser={currentUser} onLogout={handleLogout} />}
+        {activeTab === 'settings' && <SettingsView currentUser={currentUser} />}
       </main>
       </div>
 
@@ -90,6 +119,8 @@ export const App: React.FC = () => {
       <VoiceModal
         isOpen={isVoiceOpen}
         onClose={() => setIsVoiceOpen(false)}
+        conversationId={currentConversationId}
+        onResponseReceived={handleVoiceResponse}
       />
 
       {/* Authentication Modal */}

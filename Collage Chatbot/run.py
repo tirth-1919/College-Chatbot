@@ -4,6 +4,12 @@ import subprocess
 import webbrowser
 from pathlib import Path
 
+# Set UTF-8 encoding for Windows console
+if sys.platform == 'win32':
+    import codecs
+    sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
+    sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+
 # Add project root to sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -57,16 +63,16 @@ def start_server():
     print("[4/4] Starting Unified Server .............. OK")
     print("\n--------------------------------------------------------------------------------")
     print(f"  AIT AI Assistant is running at:")
-    print(f"  👉  http://localhost:{settings.PORT}")
-    print(f"  👉  http://127.0.0.1:{settings.PORT}")
+    print(f"  ->  http://localhost:{settings.PORT}")
+    print(f"  ->  http://127.0.0.1:{settings.PORT}")
     print("--------------------------------------------------------------------------------")
-    print("  • Frontend SPA    : Integrated at /")
-    print(f"  • Backend API     : Integrated at /api & /api/v1")
-    print("  • Database        : Connected & Verified")
-    print("  • Source Priority : 1. AIT Portal | 2. Admin DB | 3. Gemini AI")
-    print("  • Voice Pipeline  : VAD + Faster-Whisper + Piper TTS")
-    print("  • Health Check    : /health")
-    print("  • Metrics         : /metrics")
+    print("  * Frontend SPA    : Integrated at /")
+    print(f"  * Backend API     : Integrated at /api & /api/v1")
+    print("  * Database        : Connected & Verified")
+    print("  * Source Priority : 1. AIT Portal | 2. Admin DB | 3. Gemini AI")
+    print("  * Voice Pipeline  : VAD + Faster-Whisper + Piper TTS")
+    print("  * Health Check    : /health")
+    print("  * Metrics         : /metrics")
     print("--------------------------------------------------------------------------------")
     print("Press CTRL+C to stop the server.\n")
 

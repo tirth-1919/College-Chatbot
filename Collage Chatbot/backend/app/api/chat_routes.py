@@ -2,13 +2,14 @@ import os
 import json
 from datetime import datetime, UTC
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from backend.app.database import get_db
 from backend.app.models.entities import User, Conversation, Message, VoiceAsset
 from backend.app.schemas.schemas import ChatRequest, ChatResponse, FeedbackRequest
-from backend.app.security.auth import get_current_user
+from backend.app.security.auth import get_current_user, require_authenticated_user
 from backend.app.security.sanitizer import sanitize_user_input, check_prompt_injection
 from backend.app.security.file_validator import FileSecurityValidator
 from backend.app.config import settings
@@ -67,6 +68,11 @@ async def send_message(
     conv = None
     if payload.conversation_id:
         conv = db.query(Conversation).filter(Conversation.id == payload.conversation_id).first()
+        # Security: Verify conversation ownership if it exists
+        if conv and conv.user_id:
+            if not current_user or conv.user_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Access to this conversation is denied")
+    
     if not conv:
         conv = Conversation(
             user_id=current_user.id if current_user else None,
@@ -77,12 +83,14 @@ async def send_message(
         db.commit()
         db.refresh(conv)
 
-    # Persist user message
+    # Persist user message with voice mode indicator
     user_msg = Message(
         conversation_id=conv.id,
         role="user",
         content=sanitized,
-        language=payload.language or "en"
+        language=payload.language or "en",
+        # Voice mode is tracked at conversation level, but we can add metadata
+        source_metadata={"input_mode": "voice" if payload.mode == "VOICE" else "text"}
     )
     db.add(user_msg)
     db.commit()
@@ -101,12 +109,13 @@ async def send_message(
     # Validate response is non-empty and not a query echo
     answer_text = response_data.get("answer", response_data.get("content", ""))
     if not answer_text or not answer_text.strip():
-        answer_text = "I couldn't generate a response right now. Please try asking the question again."
+        answer_text = "I'm sorry, I couldn't answer that right now. Please try again."
         response_data["answer"] = answer_text
         response_data["content"] = answer_text
 
     # Ensure answer is not just echoing the user's query
     if answer_text.strip() == sanitized.strip():
+        # Let the resolver handle this with Gemini instead of generic fallback
         answer_text = "I'd be happy to help you with that! Could you provide more details about what you'd like to know?"
         response_data["answer"] = answer_text
         response_data["content"] = answer_text
@@ -146,6 +155,7 @@ async def handle_voice_chat(
 ):
     final_text = transcript or ""
     detected_lang = "en"
+    
     if file:
         # Validate audio file
         validator = FileSecurityValidator()
@@ -184,14 +194,21 @@ def get_voice_audio(asset_id: str, db: Session = Depends(get_db)):
 
 @router.get("/conversations")
 def list_conversations(
+    search: Optional[str] = Query(None, description="Search conversations by title"),
     db: Session = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user)
 ):
     if not current_user:
         return []
-    convs = db.query(Conversation).filter(
-        Conversation.user_id == current_user.id
-    ).order_by(Conversation.updated_at.desc()).all()
+    
+    query = db.query(Conversation).filter(Conversation.user_id == current_user.id)
+    
+    # Add search filter if provided
+    if search:
+        search_term = f"%{search}%"
+        query = query.filter(Conversation.title.ilike(search_term))
+    
+    convs = query.order_by(Conversation.updated_at.desc()).all()
 
     return [
         {
@@ -214,6 +231,13 @@ def get_conversation_details(
     conv = db.query(Conversation).filter(Conversation.id == conv_id).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Security: Verify conversation ownership
+    if conv.user_id and current_user:
+        if conv.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access to this conversation is denied")
+    elif conv.user_id and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required to access this conversation")
 
     messages = []
     for m in conv.messages:
@@ -283,3 +307,119 @@ def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db)):
                     db.commit()
 
     return {"success": True, "message_id": msg.id, "feedback": payload.feedback}
+
+
+# ----------------- Chat Management Endpoints -----------------
+
+class RenameConversationRequest(BaseModel):
+    title: str
+
+@router.patch("/conversations/{conv_id}/rename")
+def rename_conversation(
+    conv_id: str,
+    payload: RenameConversationRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_authenticated_user)
+):
+    """Rename a conversation (ChatGPT-style)"""
+    # Verify conversation ownership
+    conv = db.query(Conversation).filter(
+        Conversation.id == conv_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Update title
+    conv.title = payload.title
+    conv.updated_at = datetime.now(UTC)
+    db.commit()
+    
+    return {
+        "success": True,
+        "id": conv.id,
+        "title": conv.title,
+        "updated_at": conv.updated_at.isoformat()
+    }
+
+@router.delete("/conversations/{conv_id}")
+def delete_conversation(
+    conv_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_authenticated_user)
+):
+    """Delete a conversation (ChatGPT-style)"""
+    # Verify conversation ownership
+    conv = db.query(Conversation).filter(
+        Conversation.id == conv_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Delete conversation (cascade will handle messages)
+    db.delete(conv)
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": "Conversation deleted successfully"
+    }
+
+@router.post("/conversations/{conv_id}/archive")
+def archive_conversation(
+    conv_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_authenticated_user)
+):
+    """Archive a conversation"""
+    # Verify conversation ownership
+    conv = db.query(Conversation).filter(
+        Conversation.id == conv_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Toggle archive status
+    conv.is_archived = not conv.is_archived
+    conv.updated_at = datetime.now(UTC)
+    db.commit()
+    
+    return {
+        "success": True,
+        "id": conv.id,
+        "is_archived": conv.is_archived,
+        "updated_at": conv.updated_at.isoformat()
+    }
+
+@router.post("/conversations/{conv_id}/pin")
+def pin_conversation(
+    conv_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_authenticated_user)
+):
+    """Pin/unpin a conversation"""
+    # Verify conversation ownership
+    conv = db.query(Conversation).filter(
+        Conversation.id == conv_id,
+        Conversation.user_id == current_user.id
+    ).first()
+    
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    
+    # Toggle pin status
+    conv.is_pinned = not conv.is_pinned
+    conv.updated_at = datetime.now(UTC)
+    db.commit()
+    
+    return {
+        "success": True,
+        "id": conv.id,
+        "is_pinned": conv.is_pinned,
+        "updated_at": conv.updated_at.isoformat()
+    }

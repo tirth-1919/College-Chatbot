@@ -1,4 +1,5 @@
 import re
+import html
 from typing import Tuple, Dict, Any
 
 # Known injection patterns
@@ -41,3 +42,39 @@ def redact_pii(text: str) -> str:
     for pii_type, pattern in PII_PATTERNS.items():
         redacted = re.sub(pattern, f"[{pii_type.upper()}_REDACTED]", redacted)
     return redacted
+
+def sanitize_output(text: str) -> str:
+    """
+    Sanitize AI-generated output for student-facing display.
+    - Decode HTML entities (&#x27; -> ', &amp; -> &, etc.)
+    - Remove any accidental HTML markup
+    - Normalize whitespace
+    - Remove internal routing/debug artifacts
+    """
+    if not text:
+        return ""
+    
+    # Decode HTML entities
+    decoded = html.unescape(text)
+    
+    # Remove any remaining HTML tags (safety measure)
+    no_html = re.sub(r'<[^>]*?>', '', decoded)
+    
+    # Normalize whitespace
+    normalized = re.sub(r'\s+', ' ', no_html).strip()
+    
+    # Remove internal routing/debug artifacts that might leak
+    artifacts_to_remove = [
+        r'\[DEBUG:\s*[^\]]*\]',
+        r'\[INTERNAL:\s*[^\]]*\]',
+        r'\[ROUTING:\s*[^\]]*\]',
+        r'Source:\s*(WEBSITE|DATABASE|GEMINI|RAG)',
+        r'Confidence:\s*[\d.]+',
+        r'Intent:\s*[A-Z_]+',
+    ]
+    
+    clean = normalized
+    for pattern in artifacts_to_remove:
+        clean = re.sub(pattern, '', clean, flags=re.IGNORECASE)
+    
+    return clean.strip()

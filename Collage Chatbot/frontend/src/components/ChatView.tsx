@@ -4,11 +4,14 @@ import { api } from '../services/api';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import {
   Send, Sparkles, Volume2, Play, Pause, ThumbsUp, ThumbsDown,
-  Copy, Check, Bookmark, RefreshCw, AlertCircle, CheckCircle2, ShieldCheck
+  Copy, Check, Bookmark, RefreshCw, AlertCircle, CheckCircle2, ShieldCheck, Mic
 } from 'lucide-react';
 
 interface ChatViewProps {
   onOpenVoiceModal: () => void;
+  conversationId?: string;
+  onLoadConversation?: (conversationId: string) => void;
+  onVoiceResponse?: (transcript: string, response: ChatMessage) => void;
 }
 
 const SUGGESTED_PROMPTS = [
@@ -24,16 +27,18 @@ const SUGGESTED_PROMPTS = [
   'Show my result.'
 ];
 
-export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal, conversationId: propConversationId, onLoadConversation, onVoiceResponse }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [conversationId, setConversationId] = useState<string | undefined>(undefined);
+  const [conversationId, setConversationId] = useState<string | undefined>(propConversationId);
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   const [lastUserPrompt, setLastUserPrompt] = useState<string>('');
   const [selectedImage, setSelectedImage] = useState<ImageCard | null>(null);
+  const [loadingConversation, setLoadingConversation] = useState(false);
+  const [voiceModeActive, setVoiceModeActive] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -53,6 +58,45 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
     window.addEventListener('ait:new-chat', resetChat);
     return () => window.removeEventListener('ait:new-chat', resetChat);
   }, []);
+
+  // Load conversation when conversationId prop changes
+  useEffect(() => {
+    if (propConversationId && propConversationId !== conversationId) {
+      loadConversation(propConversationId);
+    }
+  }, [propConversationId, conversationId]);
+
+  const loadConversation = async (convId: string) => {
+    setLoadingConversation(true);
+    try {
+      const convData = await api.getConversation(convId);
+      setConversationId(convId);
+      setMessages(convData.messages.map((msg: any) => ({
+        id: msg.id,
+        role: msg.role,
+        content: msg.content,
+        status: 'complete',
+        timestamp: msg.created_at,
+        intent: msg.intent,
+        entities: msg.entities,
+        selected_source: msg.selected_source,
+        sources: msg.sources,
+        images: msg.images,
+        voice_asset_id: msg.voice_asset_id,
+        confidence: msg.confidence,
+        feedback: msg.feedback,
+        input_mode: (msg.source_metadata && msg.source_metadata.input_mode) || 'text'
+      })));
+      
+      if (onLoadConversation) {
+        onLoadConversation(convId);
+      }
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+    } finally {
+      setLoadingConversation(false);
+    }
+  };
 
   const handleSend = async (textToSend?: string) => {
     const query = (textToSend || input).trim();
@@ -209,12 +253,59 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
     }
   };
 
+  const handleVoiceResponse = (transcript: string, response: ChatMessage) => {
+    // Add the user's voice transcript as a user message with voice indicator
+    const userMsgId = `user-voice-${Date.now()}`;
+    const userMsg: ChatMessage = {
+      id: userMsgId,
+      role: 'user',
+      content: transcript, // Use the actual transcript from voice
+      status: 'complete',
+      timestamp: new Date().toISOString(),
+      // Add metadata to indicate this was a voice message
+      input_mode: 'voice'
+    };
+
+    // Add the assistant's response
+    const asstMsg: ChatMessage = {
+      ...response,
+      status: 'complete',
+      timestamp: response.timestamp || new Date().toISOString(),
+    };
+
+    setMessages(prev => [...prev, userMsg, asstMsg]);
+    setLastUserPrompt(transcript);
+
+    if (response.conversation_id) {
+      setConversationId(response.conversation_id);
+    }
+
+    // Notify parent component about the voice response
+    if (onVoiceResponse) {
+      onVoiceResponse(transcript, response);
+    }
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-4.75rem)] max-w-4xl mx-auto px-3 sm:px-6 w-full">
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto space-y-6 pt-4 pb-6 pr-1 sm:pr-2">
+        {/* Loading Conversation */}
+        {loadingConversation && (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <div className="flex items-center space-x-3 text-slate-300">
+              <div className="flex space-x-1.5 items-center">
+                <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                <div className="w-2 h-2 rounded-full bg-ait-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span className="text-sm font-medium text-slate-300">Loading conversation…</span>
+            </div>
+          </div>
+        )}
+
         {/* Welcome Screen if empty */}
-        {messages.length === 0 && (
+        {messages.length === 0 && !loadingConversation && (
           <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4 py-8">
             <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl bg-slate-900 border border-slate-700/80 p-3 shadow-2xl flex items-center justify-center mb-5">
               <img
@@ -256,6 +347,11 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
               <span className="font-semibold text-slate-300">
                 {msg.role === 'user' ? 'You' : 'AIT AI Assistant'}
               </span>
+              {msg.input_mode === 'voice' && msg.role === 'user' && (
+                <div className="flex items-center" title="Voice message">
+                  <Mic className="w-3 h-3 text-ait-gold" />
+                </div>
+              )}
               <span>•</span>
               <span>{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
@@ -441,11 +537,15 @@ export const ChatView: React.FC<ChatViewProps> = ({ onOpenVoiceModal }) => {
           <button
             type="button"
             onClick={onOpenVoiceModal}
-            className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-400 transition-all hover:scale-105 flex-shrink-0"
+            className={`p-3 rounded-xl transition-all hover:scale-105 flex-shrink-0 ${
+              voiceModeActive 
+                ? 'bg-ait-600 text-white animate-pulse' 
+                : 'bg-slate-800 hover:bg-slate-700 text-blue-400'
+            }`}
             title="Start Voice Mode"
             aria-label="Start Voice Mode"
           >
-            <Volume2 className="w-5 h-5 text-blue-400" />
+            <Volume2 className="w-5 h-5" />
           </button>
 
           <textarea

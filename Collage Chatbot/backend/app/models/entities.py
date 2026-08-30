@@ -46,19 +46,24 @@ class User(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, default=generate_uuid)
     email = Column(String(150), unique=True, index=True, nullable=False)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)  # Nullable for Google OAuth users
     full_name = Column(String(150), nullable=False)
     enrollment_number = Column(String(50), unique=True, index=True, nullable=True)
+    google_id = Column(String(255), unique=True, index=True, nullable=True)  # Google OAuth ID
+    profile_image_url = Column(String(500), nullable=True)  # Profile image from OAuth
     is_active = Column(Boolean, default=True)
+    is_verified = Column(Boolean, default=False)  # Email verification status
     department_id = Column(String, ForeignKey("departments.id"), nullable=True)
     course_id = Column(String, ForeignKey("courses.id"), nullable=True)
     current_semester = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    last_login_at = Column(DateTime, nullable=True)
 
     roles = relationship("Role", secondary=user_roles, backref="users")
     conversations = relationship("Conversation", back_populates="user", cascade="all, delete-orphan")
     support_tickets = relationship("SupportTicket", back_populates="user")
+    password_reset_tokens = relationship("PasswordResetToken", back_populates="user", cascade="all, delete-orphan")
 
 # ----------------- 2. Academic Master Data -----------------
 
@@ -474,6 +479,17 @@ class SupportTicket(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
     user = relationship("User", back_populates="support_tickets")
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    id = Column(String, primary_key=True, default=generate_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    token = Column(String(255), unique=True, index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    
+    user = relationship("User")
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"

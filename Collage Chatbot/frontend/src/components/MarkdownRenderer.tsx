@@ -9,15 +9,12 @@ interface MarkdownRendererProps {
 export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className = '' }) => {
   if (!content) return null;
 
-  // Unescape HTML entities
+  // Unescape HTML entities - comprehensive decoding
   const unescapeHtml = (text: string) => {
-    return text
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, ' ');
+    // Create a temporary DOM element to decode all HTML entities
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = text;
+    return textarea.value;
   };
 
   const cleanContent = unescapeHtml(content);

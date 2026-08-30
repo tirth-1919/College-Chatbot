@@ -105,6 +105,80 @@ class IntentClassifier:
             r"\bsyllabus\s+su\s+che\b",
             r"(पाठ्यक्रम|અભ્યાસક્રમ|સિલેબસ|सिलेबस)"
         ],
+        "COLLEGE_OVERVIEW": [
+            r"\b(about\s+(ait|ahmedabad\s+institute\s+of\s+technology|the\s+college|this\s+college|our\s+college))\b",
+            r"\b(what\s+is\s+ait|tell\s+me\s+about\s+ait|ait\s+overview|college\s+overview)\b",
+            r"\b(history\s+of\s+ait|when\s+was\s+ait\s+established|who\s+established\s+ait)\b"
+        ],
+        "ADMISSION": [
+            r"\b(admission|admit|join|enroll|registration|apply|application)\b",
+            r"\b(get\s+admission|take\s+admission|admission\s+process|how\s+to\s+join|how\s+to\s+apply)\b",
+            r"\b(admission\s+form|admission\s+fees|admission\s+eligibility|admission\s+date)\b",
+            r"(પ્રવેશન|દાખલો|એનરોલ|રજિસ્ટ્રેશન|પ્રવેશન\s+ફોર્મ|દાખલ\s+ફોર્મ|एडमिशन|दाखिल)"
+        ],
+        "COURSES": [
+            r"\b(courses?|programs?|degrees?|bca|btech|mca|mba|offered|available|what\s+courses|list\s+courses)\b",
+            r"\b(what\s+programs|what\s+degrees|tell\s+me\s+about\s+courses|course\s+list)\b",
+            r"(કોર્સેઝ|પ્રોગ્રામ|ડિગ્રી|અભ્યાસ|ઉપલબધિ|કોર્સેઝ)"
+        ],
+        "PROGRAM_DURATION": [
+            r"\b(duration|how\s+long|how\s+many\s+year|years?|length|time\s+period)\b",
+            r"\b((?:bca|btech|mca|mba)\s+(?:duration|years?|length|time))\b",
+            r"\b(how\s+long\s+is\s+(?:bca|btech|mca|mba))\b",
+            r"(કેટલો|કેટલા|સમય|વર્ષ|કિતલી|સમય\s+વર્ષ|कितना\s+समय|कितने\s+साल)"
+        ],
+        "ELIGIBILITY": [
+            r"\b(eligibility|eligible|requirements|criteria|qualification|who\s+can\s+apply|who\s+is\s+eligible)\b",
+            r"\b((?:bca|btech|mca|mba)\s+(?:eligibility|eligible|requirements|criteria))\b",
+            r"\b(eligibility\s+for\s+(?:bca|btech|mca|mba)|who\s+can\s+join\s+(?:bca|btech|mca|mba))\b",
+            r"(લાયક|પાત્રતા|શરત|ક્રિયો|શરત|શર્ત|યોગ્યપાવી)"
+        ],
+        "PRINCIPAL": [
+            r"\b(principal|head\s+of\s+institute|director|who\s+is\s+the\s+principal|who\s+is\s+the\s+head)\b",
+            r"\b(principal\s+of\s+ait|ait\s+principal|college\s+principal)\b",
+            r"(પ્િનિપાલ|કૉલાદ|હેડ|અધ્યક્ષ|પ્રિનિપાલ\s+વિભાગ|કૉલાદ\s+હેડ)"
+        ],
+        "CONTACT": [
+            r"\b(contact|phone|email|address|location|where\s+is\s+ait|how\s+to\s+contact|reach)\b",
+            r"\b(contact\s+number|contact\s+info|email\s+address|campus\s+address)\b",
+            r"(સંપર્ક|ફોન|સ્થ|લોકેશન|સ્થ\s+નંબર|સ્પર્ક\s+ફોન|સંપર્ક\s+સ્થ)"
+        ],
+        "CAMPUS": [
+            r"\b(campus|college\s+campus|location|where\s+is\s+located|campus\s+look|campus\s+infrastructure)\b",
+            r"\b(campus\s+facilities|campus\s+life|what\s+does\s+ait\s+look)\b",
+            r"(કેમ્પસ|કેમ્પસ\s+જુઓ|કૉલેજ|કેમ્પસ\s+દેખલડા|કેમ્પસ\s+દેખલડા)"
+        ],
+        "FACILITIES": [
+            r"\b(facility|facilities|infrastructure|what\s+facilities|campus\s+facilities)\b",
+            r"\b(facilities?\s+available|list\s+facilities|show\s+facilities)\b",
+            r"(સુવિધાન્|સુવિધાન્\s|ઉપલબધિ|સુવિધાન|infrastructure)"
+        ],
+        "HOSTEL": [
+            r"\b(hostel|hostels|accommodation|hostel\s+facilities|hostel\s+life|stay|hostel\s+fees)\b",
+            r"\b(hostel\s+available|hostel\s+rooms|hostel\s+capacity)\b",
+            r"(હોસ્ટેલ|હોસ્ટેલ|હોસ્ટેલ\s+સુવિધાન|અકમોડેશન|રહવા)"
+        ],
+        "LIBRARY": [
+            r"\b(library|libraries|central\s+library|reading\s+room|book\s+access|library\s+hours)\b",
+            r"\b(library\s+timings|library\s+facilities|library\s+resources)\b",
+            r"(લાઇબ્રી|લાઇબ્રી|પુસ્તક|પુસ્તક\s+કલાઇર|લાઇબ્રી\s+સમય)"
+        ],
+        "PLACEMENT": [
+            r"\b(placement|placements|job|career|recruitment|company|campus\s+placement|placement\s+cell)\b",
+            r"\b(placement\s+opportunities|placement\s+record|placement\s+statistics)\b",
+            r"(પ્લેસમેન્ટ|કરિયર|જોબ|પ્લસમેન્ટ|પ્લસમેન્ટ\s+ઓરિયર)"
+        ],
+        "SCHOLARSHIP": [
+            r"\b(scholarship|scholarships|financial\s+aid|aid|grant|fee\s+waiver|merit\s+scholarship)\b",
+            r"\b(scholarship\s+for\s+(?:bca|btech|mca|mba)|fee\s+scholarship)\b",
+            r"(સ્કલરિપ|શિક્ષય|આર્મિક|ફી\s+વેર|વિદાન|સ્કલરિપ|સ્કલરિપ)"
+        ],
+        "DOCUMENTS": [
+            r"\b(document|documents|required|need|what\s+documents|admission\s+documents|join\s+documents)\b",
+            r"\b(documents?\s+for\s+(?:admission|joining|registration|apply))\b",
+            r"\b((?:bca|btech|mca|mba)\s+documents?)\b",
+            r"(દસ્તામ|દસ્તામો|જરૂરી\s+લાવા|દસ્તામ\s+માંગલિ)"
+        ],
         "SUPPORT_TICKET": [
             r"\b(complaint|grievance|support|helpdesk|issue|ticket|problem)\b"
         ],

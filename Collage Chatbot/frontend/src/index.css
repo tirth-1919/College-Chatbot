@@ -115,12 +115,32 @@ h1, h2, h3, h4, .font-heading {
 .sidebar-link.is-active { box-shadow: inset 3px 0 var(--ait-primary); }
 .sidebar-link.is-active svg { color: #50aaff; }
 .conversation-list { margin: 4px 0 10px; }
-.conversation-item { width: 100%; display: flex; gap: 8px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 9px 10px 9px 17px; border: 0; border-radius: 8px; color: #8498b0; background: transparent; font-size: 11px; text-align: left; cursor: pointer; }
+.conversation-item { width: 100%; display: flex; gap: 8px; align-items: center; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 9px 10px 9px 17px; border: 0; border-radius: 8px; color: #8498b0; background: transparent; font-size: 11px; text-align: left; cursor: pointer; position: relative; }
 .conversation-item:hover, .conversation-item.is-selected { color: #dbe9f7; background: rgba(255,255,255,.045); }
 .conversation-dot { width: 5px; height: 5px; border-radius: 50%; background: #57718f; flex: 0 0 auto; }
 .sidebar-footer { border-top: 1px solid var(--ait-border); padding-top: 10px; }
 .collapse-button { color: #70859e; margin-top: 4px; }
 .sidebar-backdrop { display: none; }
+
+/* Enhanced Conversation Styles */
+.conversation-item-wrapper { position: relative; }
+.conversation-menu-button { position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%); padding: 0.25rem; border-radius: 0.25rem; color: #64748b; background: transparent; border: none; cursor: pointer; opacity: 0; transition: opacity 0.2s; }
+.conversation-item-wrapper:hover .conversation-menu-button { opacity: 1; }
+.conversation-dropdown { position: absolute; right: 0; top: 100%; background: rgba(7,17,31,.95); border: 1px solid var(--ait-border); border-radius: 0.5rem; padding: 0.25rem; min-width: 120px; z-index: 50; box-shadow: 0 10px 25px rgba(0,0,0,.3); }
+.conversation-dropdown button { width: 100%; text-align: left; padding: 0.5rem 0.75rem; border-radius: 0.25rem; color: #cbd5e1; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; transition: all 0.2s; }
+.conversation-dropdown button:hover { background: rgba(30,41,59,.8); color: white; }
+
+/* User Profile Styles */
+.user-profile { display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; border-top: 1px solid var(--ait-border); position: relative; }
+.user-avatar { width: 2rem; height: 2rem; border-radius: 50%; background: var(--ait-primary); display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; overflow: hidden; }
+.user-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.user-info { flex: 1; min-width: 0; }
+.user-name { font-size: 0.875rem; font-weight: 600; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-email { font-size: 0.75rem; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.user-menu-button { padding: 0.25rem; border-radius: 0.25rem; color: #64748b; background: transparent; border: none; cursor: pointer; }
+.user-dropdown { position: absolute; bottom: 100%; right: 0; background: rgba(7,17,31,.95); border: 1px solid var(--ait-border); border-radius: 0.5rem; padding: 0.25rem; min-width: 140px; z-index: 50; box-shadow: 0 10px 25px rgba(0,0,0,.3); margin-bottom: 0.5rem; }
+.user-dropdown button { width: 100%; text-align: left; padding: 0.5rem 0.75rem; border-radius: 0.25rem; color: #cbd5e1; background: transparent; border: none; cursor: pointer; display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; transition: all 0.2s; }
+.user-dropdown button:hover { background: rgba(30,41,59,.8); color: white; }
 
 @media (max-width: 900px) {
   .app-sidebar { width: 264px; transform: translateX(-100%); box-shadow: 18px 0 50px rgba(0,0,0,.35); }
